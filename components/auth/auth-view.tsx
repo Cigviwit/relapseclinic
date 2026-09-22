@@ -30,7 +30,7 @@ export default function AuthView() {
   }
 
   return <div className="auth-container"><div className="auth-card">
-    <div className="auth-brand"><span className="auth-brand-icon"><HeartPulse size={26}/></span><h1>ClinicLoop<span className="brand-dot">.</span></h1></div>
+    <div className="auth-brand"><span className="auth-brand-icon"><HeartPulse size={26}/></span><h1>RelapseClinic<span className="brand-dot">.</span></h1></div>
     <p className="auth-subtitle">Connected clinic scheduling & WhatsApp follow-up workspace</p>
     <div className="auth-tabs" role="tablist" aria-label="Account type">
       <button type="button" role="tab" aria-selected={mode === "clinic"} className={mode === "clinic" ? "auth-tab active" : "auth-tab"} onClick={() => { setMode("clinic"); setError(""); }}>Clinic login</button>

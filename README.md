@@ -1,4 +1,4 @@
-# ClinicLoop
+# RelapseClinic
 
 Clinic scheduling and WhatsApp follow-up workspace backed by Firebase Authentication and Firestore.
 

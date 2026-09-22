@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "ClinicLoop — Appointments & Follow-ups",
+  title: "RelapseClinic — Appointments & Follow-ups",
   description: "A calmer clinic day. Manage appointments, patients, and follow-up reminders in one place.",
   other: {
     "codex-preview": "development",
