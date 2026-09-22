@@ -5,6 +5,7 @@ import { readExecutionProfile } from "./execution-profile.mjs";
 const [command, ...args] = process.argv.slice(2);
 if (!["dev", "build"].includes(command)) throw new Error("Expected dev or build.");
 const managedLinux = readExecutionProfile() === "managed-linux";
+const isVercelBuild = process.env.VERCEL === "1" && command === "build";
 
 if (managedLinux && command === "build") {
   const result = spawnSync("bash", [
@@ -15,7 +16,7 @@ if (managedLinux && command === "build") {
 }
 
 // Import in this process so the preview owner retains its PID and signals.
-const cli = new URL(managedLinux
+const cli = new URL(managedLinux || isVercelBuild
   ? "../node_modules/vite/bin/vite.js"
   : "../node_modules/vinext/dist/cli.js", import.meta.url);
 process.argv = [process.execPath, fileURLToPath(cli), command,
