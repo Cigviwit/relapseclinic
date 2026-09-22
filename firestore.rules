@@ -1,0 +1,90 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // users/{uid}: uid, email, clinicId, createdAt (strings); admin writes only.
+    // clinics/{id}: id, name, address, phone, timezone, opens, closes (strings), doctors (list).
+    // patients/{id}: id, clinicId, name, phone (strings), consent (bool).
+    // appointments/{id}: id, clinicId, patientId, doctorId, date, time, reason, status (strings), duration (int).
+    // reminders/{id}: id, clinicId, patientId, date, time, message, status (strings), optional sentAt/sentMessage.
+    function signedIn() { return request.auth != null; }
+    function isAdmin() { return signedIn() && request.auth.uid == 'zfXlb9MEMQSQDBNYOk5RJFDJcZo1'; }
+    function profilePath() { return /databases/$(database)/documents/users/$(request.auth.uid); }
+    function clinicMember(clinicId) {
+      return signedIn() && exists(profilePath()) && get(profilePath()).data.clinicId == clinicId;
+    }
+    function canAccess(clinicId) { return isAdmin() || clinicMember(clinicId); }
+    function text(value, max) { return value is string && value.size() > 0 && value.size() <= max; }
+    function optionalText(data, field, max) { return !(field in data) || text(data[field], max); }
+    function validClinic(data, id) {
+      return data.keys().hasAll(['id','name','address','phone','timezone','opens','closes','doctors'])
+        && data.keys().hasOnly(['id','name','address','phone','timezone','opens','closes','doctors'])
+        && data.id == id && text(data.name, 100) && text(data.address, 250)
+        && text(data.phone, 20) && text(data.timezone, 80)
+        && text(data.opens, 5) && text(data.closes, 5)
+        && data.doctors is list && data.doctors.size() > 0 && data.doctors.size() <= 30;
+    }
+    function validPatient(data, id) {
+      return data.keys().hasAll(['id','clinicId','name','phone','consent'])
+        && data.keys().hasOnly(['id','clinicId','name','phone','consent'])
+        && data.id == id && text(data.clinicId, 100) && text(data.name, 100)
+        && text(data.phone, 20) && data.consent is bool;
+    }
+    function validAppointment(data, id) {
+      return data.keys().hasAll(['id','clinicId','patientId','doctorId','date','time','duration','reason','status'])
+        && data.keys().hasOnly(['id','clinicId','patientId','doctorId','date','time','duration','reason','status'])
+        && data.id == id && text(data.clinicId, 100) && text(data.patientId, 100)
+        && text(data.doctorId, 100) && text(data.date, 10) && text(data.time, 5)
+        && data.duration is int && data.duration >= 5 && data.duration <= 240
+        && text(data.reason, 100) && data.status in ['scheduled','completed','cancelled'];
+    }
+    function validReminder(data, id) {
+      return data.keys().hasAll(['id','clinicId','patientId','date','time','message','status'])
+        && data.keys().hasOnly(['id','clinicId','patientId','date','time','message','status','sentAt','sentMessage'])
+        && data.id == id && text(data.clinicId, 100) && text(data.patientId, 100)
+        && text(data.date, 10) && text(data.time, 5) && text(data.message, 1000)
+        && data.status in ['scheduled','simulated-sent','cancelled']
+        && optionalText(data, 'sentAt', 40) && optionalText(data, 'sentMessage', 1300);
+    }
+    function validUser(data, uid) {
+      return data.keys().hasAll(['uid','email','clinicId','createdAt'])
+        && data.keys().hasOnly(['uid','email','clinicId','createdAt'])
+        && data.uid == uid && text(data.email, 254) && text(data.clinicId, 100)
+        && text(data.createdAt, 40);
+    }
+    function sameClinic() { return request.resource.data.clinicId == resource.data.clinicId; }
+
+    match /users/{uid} {
+      allow get: if signedIn() && request.auth.uid == uid;
+      allow list: if false;
+      allow create: if isAdmin() && validUser(request.resource.data, uid)
+        && exists(/databases/$(database)/documents/clinics/$(request.resource.data.clinicId));
+      allow update, delete: if false;
+    }
+    match /clinics/{id} {
+      allow get: if isAdmin() || clinicMember(id);
+      allow list: if isAdmin();
+      allow create: if isAdmin() && validClinic(request.resource.data, id);
+      allow update: if canAccess(id) && validClinic(request.resource.data, id);
+      allow delete: if false;
+    }
+    match /patients/{id} {
+      allow get, list: if canAccess(resource.data.clinicId);
+      allow create: if canAccess(request.resource.data.clinicId) && validPatient(request.resource.data, id);
+      allow update: if canAccess(resource.data.clinicId) && sameClinic() && validPatient(request.resource.data, id);
+      allow delete: if false;
+    }
+    match /appointments/{id} {
+      allow get, list: if canAccess(resource.data.clinicId);
+      allow create: if canAccess(request.resource.data.clinicId) && validAppointment(request.resource.data, id);
+      allow update: if canAccess(resource.data.clinicId) && sameClinic() && validAppointment(request.resource.data, id);
+      allow delete: if false;
+    }
+    match /reminders/{id} {
+      allow get, list: if canAccess(resource.data.clinicId);
+      allow create: if canAccess(request.resource.data.clinicId) && validReminder(request.resource.data, id);
+      allow update: if canAccess(resource.data.clinicId) && sameClinic() && validReminder(request.resource.data, id);
+      allow delete: if false;
+    }
+    match /{document=**} { allow read, write: if false; }
+  }
+}

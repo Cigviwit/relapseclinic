@@ -14,3 +14,40 @@
 @media(max-width:767px){.desktop-breadcrumb{display:none!important}.mobile-clinic{display:block;min-width:0;max-width:65%}.mobile-clinic .picker{font-size:.875rem;font-weight:600;border:0;padding:0;box-shadow:none}.topbar{padding-inline:16px}.demo-pill{font-size:.75rem;white-space:nowrap;padding:5px 7px}.desktop-views,.desktop-grid{display:none}.mobile-strip{display:grid}.mobile-doctor{display:block!important}.doctor-filter{max-width:100%;width:100%;margin-top:8px}.calendar-toolbar{padding-bottom:12px}.appointment-row{display:grid;grid-template-columns:40px 33px minmax(0,1fr);align-items:start;gap:8px 10px}.appointment-row>.status{grid-column:3;justify-self:start;margin-left:0}.panel-heading{flex-wrap:wrap}.search-field{width:100%}.patient-row{padding:18px 14px;gap:10px;flex-wrap:wrap}.patient-row>svg{display:none}.patient-row .patient-summary{min-width:140px}.patient-detail{padding:18px 14px}.patient-hero>.secondary{margin-left:0}.patient-detail .form-actions{justify-content:flex-start}.history-reminder{font-size:.8125rem}.reminder-list{padding:0 14px 14px;gap:14px}.reminder-card{padding:15px}.reminder-top{flex-wrap:wrap}.reminder-time{font-size:.8125rem}.reminder-actions{gap:8px}.reminder-actions .secondary{padding:8px}.settings-panel{padding:20px 16px}.settings-aside{grid-template-columns:1fr}.form-grid{grid-template-columns:1fr}.clinic-dialog{padding:22px 18px!important;max-width:calc(100% - 20px)!important}.form-actions>button{flex:1}.form-stack{gap:17px}.stat p{max-width:100%;padding-right:20px}.stat-icon{right:12px;top:16px}.stat-icon svg{width:16px}.eyebrow{font-size:.75rem;letter-spacing:1px}.demo-notice{padding:16px;align-items:flex-start}.date-strip small{font-size:.75rem}.date-strip strong{font-size:1.125rem}}
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 @media(max-width:767px){.heading{margin-bottom:18px;gap:14px}.heading .muted{line-height:1.6}.stats{gap:9px;margin-bottom:18px}.stat{padding:13px 14px}.stat p{font-size:.8125rem;margin-bottom:10px}.stat strong{font-size:1.65rem;margin-bottom:0}.stat small{display:none}.date-strip button{min-height:76px}.calendar-toolbar{gap:6px}}
+
+/* Auth view styling */
+.auth-container{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:32px 16px;background:radial-gradient(circle at 50% 15%,#e5f4ef 0%,#f5f8f9 70%)}
+.auth-card{background:#ffffff;border:1px solid #dce5e7;border-radius:18px;box-shadow:0 12px 35px rgba(8,127,117,0.08);width:100%;max-width:540px;padding:36px 32px}
+.auth-brand{display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:8px}
+.auth-brand h1{font-size:1.75rem;font-weight:750;color:#172b3b;letter-spacing:-.8px;margin:0}
+.auth-brand-icon{display:grid;place-items:center;background:#087f75;color:white;border-radius:10px;width:40px;height:40px}
+.auth-subtitle{text-align:center;color:#647582;font-size:.875rem;margin:0 0 24px 0;line-height:1.5}
+.auth-tabs{display:grid;grid-template-columns:1fr 1fr;gap:6px;background:#edf4f4;padding:5px;border-radius:10px;margin-bottom:24px}
+.auth-tab{display:flex;align-items:center;justify-content:center;gap:8px;padding:10px 14px;border:0;background:transparent;color:#647582;font-size:.875rem;font-weight:600;border-radius:7px;cursor:pointer;transition:all .15s ease}
+.auth-tab.active{background:#ffffff;color:#087f75;box-shadow:0 2px 6px rgba(0,0,0,0.06)}
+.auth-form{display:flex;flex-direction:column;gap:16px}
+.auth-section-title{display:flex;align-items:center;gap:8px;font-size:.84rem;font-weight:700;color:#087f75;border-bottom:1px solid #e8f0ef;padding-bottom:6px;margin-top:6px}
+.auth-section-between{justify-content:space-between}
+.auth-field{display:flex;flex-direction:column;gap:6px;text-align:left}
+.auth-field label{font-size:.8125rem;font-weight:600;color:#435b69;display:flex;align-items:center;gap:6px}
+.password-input-wrap{position:relative;display:flex;align-items:center}
+.password-input-wrap input{padding-right:38px}
+.password-toggle{position:absolute;right:10px;background:none;border:none;color:#8799a5;padding:4px;display:grid;place-items:center;cursor:pointer}
+.password-toggle:hover{color:#087f75}
+.auth-checkbox-row{display:flex;align-items:center;margin:2px 0}
+.auth-remember-label{display:flex;align-items:center;gap:8px;font-size:.84rem;color:#526c78;cursor:pointer}
+.auth-grid-2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.auth-doctors-list{display:flex;flex-direction:column;gap:10px;max-height:220px;overflow-y:auto;padding-right:4px}
+.auth-doctor-row{display:grid;grid-template-columns:1fr 1fr auto;gap:8px;align-items:flex-end;background:#fafcfb;border:1px solid #e6f0ed;border-radius:8px;padding:10px}
+.auth-add-doc-btn{display:inline-flex;align-items:center;gap:4px;font-size:.75rem;font-weight:600;color:#087f75;background:#eaf5f2;border:1px solid #d2eae3;padding:4px 8px;border-radius:6px;cursor:pointer}
+.auth-add-doc-btn:hover{background:#dcf0eb}
+.auth-remove-doc-btn{background:none;border:none;color:#c44f59;padding:8px 4px;cursor:pointer;display:grid;place-items:center}
+.auth-remove-doc-btn:hover{color:#9e323b}
+.auth-submit-btn{width:100%;margin-top:6px;font-size:.9375rem;padding:12px;font-weight:600}
+.auth-switch-prompt{text-align:center;font-size:.8125rem;color:#70828d;margin-top:6px}
+.auth-link-btn{background:none;border:none;color:#087f75;font-weight:600;cursor:pointer;text-decoration:underline;padding:0;margin-left:4px}
+.auth-error-banner{background:#fdf2f2;border:1px solid #f9d7d9;color:#b93845;font-size:.8125rem;padding:10px 14px;border-radius:8px;margin-bottom:4px;text-align:left;line-height:1.4}
+.user-menu{display:flex;align-items:center;gap:10px;margin-top:12px;padding-top:12px;border-top:1px solid #e3e9eb}
+.user-menu .sign-out-btn{display:inline-flex;align-items:center;gap:5px;font-size:.75rem;color:#bb3942;background:none;border:0;cursor:pointer;padding:4px 6px;border-radius:4px}
+.user-menu .sign-out-btn:hover{background:#fdf0f0}
+@media(max-width:600px){.auth-card{padding:28px 18px}.auth-grid-2{grid-template-columns:1fr}.auth-doctor-row{grid-template-columns:1fr;position:relative;padding-top:14px}.auth-remove-doc-btn{position:absolute;top:6px;right:6px}}
