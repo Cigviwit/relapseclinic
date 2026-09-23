@@ -27,10 +27,8 @@ The development preview uses port 5173. On Windows installations with a broken n
 
 Clinic registration is closed. The designated Firebase admin account signs in through **Admin login**, creates each clinic and its own email/password account, and can view every clinic. A clinic account can only query its linked clinic and its own patients, appointments, and reminders. `firestore.rules` enforces this on the backend; deploy changes with `npx firebase-tools deploy --only firestore:rules --project relapse-clinic-db`.
 
-Daily opening/closing hours apply to every day. Appointments use clinic-local dates and times; changing timezone preserves their wall-clock times. The app checks for due reminders every 30 seconds while open; it does not deliver messages or run background jobs. Simulations record the exact message preview and timestamp.
+Daily opening/closing hours apply to every day. Appointments use clinic-local dates and times; changing timezone preserves their wall-clock times. The website records appointments and consent in Firestore. Firebase Cloud Functions are deployed with MSG91 sending disabled while the Relapse templates are under review. Once activated, they send booking confirmations and check for appointment and missed-visit reminders every five minutes. Staff must explicitly mark a visit Missed before missed-visit messages are eligible.
 
-## Later integrations
+## WhatsApp production setup
 
-Add server-side booking conflict checks and concurrent-write protection before using the scheduler for high-volume booking.
-
-Replace `MessagingService` with an authenticated backend endpoint for MSG91. Keep its key on the server, validate tenant membership and current consent, use the shared sender with clinic-identifying approved templates, and add a reliable scheduler and delivery webhooks. Simulated status must stay distinct from real delivery states. No browser timer should deliver production messages.
+See [functions/MSG91_SETUP.md](functions/MSG91_SETUP.md) for the exact template copy, secret structure, and deploy steps. The older manual reminder records remain visible in patient history as drafts; they do not trigger WhatsApp delivery.

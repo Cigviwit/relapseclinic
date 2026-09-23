@@ -35,7 +35,7 @@ service cloud.firestore {
         && data.id == id && text(data.clinicId, 100) && text(data.patientId, 100)
         && text(data.doctorId, 100) && text(data.date, 10) && text(data.time, 5)
         && data.duration is int && data.duration >= 5 && data.duration <= 240
-        && text(data.reason, 100) && data.status in ['scheduled','completed','cancelled'];
+        && text(data.reason, 100) && data.status in ['scheduled','completed','cancelled','missed'];
     }
     function validReminder(data, id) {
       return data.keys().hasAll(['id','clinicId','patientId','date','time','message','status'])
@@ -84,6 +84,10 @@ service cloud.firestore {
       allow create: if canAccess(request.resource.data.clinicId) && validReminder(request.resource.data, id);
       allow update: if canAccess(resource.data.clinicId) && sameClinic() && validReminder(request.resource.data, id);
       allow delete: if false;
+    }
+    match /messageDeliveries/{id} {
+      allow get, list: if canAccess(resource.data.clinicId);
+      allow create, update, delete: if false;
     }
     match /{document=**} { allow read, write: if false; }
   }

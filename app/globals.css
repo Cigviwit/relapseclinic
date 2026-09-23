@@ -51,3 +51,8 @@
 .user-menu .sign-out-btn{display:inline-flex;align-items:center;gap:5px;font-size:.75rem;color:#bb3942;background:none;border:0;cursor:pointer;padding:4px 6px;border-radius:4px}
 .user-menu .sign-out-btn:hover{background:#fdf0f0}
 @media(max-width:600px){.auth-card{padding:28px 18px}.auth-grid-2{grid-template-columns:1fr}.auth-doctor-row{grid-template-columns:1fr;position:relative;padding-top:14px}.auth-remove-doc-btn{position:absolute;top:6px;right:6px}}
+/* Server messaging outcomes shown in the appointment message log. */
+.status.accepted{background:#e6f5ec;color:#146943}
+.status.failed,.status.unknown{background:#fff0e9;color:#a04320}
+.status.sending{background:#eaf1fb;color:#315a89}
+.status.missed{background:#fff3e2;color:#915a16}
