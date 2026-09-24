@@ -27,7 +27,7 @@ The development preview uses port 5173. On Windows installations with a broken n
 
 Clinic registration is closed. The designated Firebase admin account signs in through **Admin login**, creates each clinic and its own email/password account, and can view every clinic. A clinic account can only query its linked clinic and its own patients, appointments, and reminders. `firestore.rules` enforces this on the backend; deploy changes with `npx firebase-tools deploy --only firestore:rules --project relapse-clinic-db`.
 
-Daily opening/closing hours apply to every day. Appointments use clinic-local dates and times; changing timezone preserves their wall-clock times. The website records appointments and consent in Firestore. Firebase Cloud Functions are deployed with MSG91 sending disabled while the Relapse templates are under review. Once activated, they send booking confirmations and check for appointment and missed-visit reminders every five minutes. Staff must explicitly mark a visit Missed before missed-visit messages are eligible.
+Daily opening/closing hours apply to every day. Appointments use clinic-local dates and times; changing timezone preserves their wall-clock times. The website records appointments and consent in Firestore. Firebase Cloud Functions send MSG91 booking confirmations and check for appointment and missed-visit reminders every five minutes. Staff must explicitly mark a visit Missed before missed-visit messages are eligible.
 
 ## WhatsApp production setup
 

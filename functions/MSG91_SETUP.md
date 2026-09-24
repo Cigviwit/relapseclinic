@@ -1,6 +1,6 @@
 # MSG91 appointment messaging
 
-The two **Utility** WhatsApp templates were submitted on the Relapse sender (`917276221423`) in English. Keep the numbered placeholders in this order. Leave `enabled` false until MSG91/Meta shows both templates as **approved**.
+The two **Utility** WhatsApp templates are approved and enabled on the Relapse sender (`917276221423`) in English. Keep the numbered placeholders in this order.
 
 ## Appointment template
 
@@ -28,7 +28,7 @@ Use the integrated WhatsApp number, template namespace, approved template names,
 
 ```json
 {
-  "enabled": false,
+  "enabled": true,
   "integratedNumber": "917276221423",
   "namespace": "8e0e16f7_84c8_48cd_afcd_84c4d6753ed3",
   "language": "en",
@@ -37,6 +37,6 @@ Use the integrated WhatsApp number, template namespace, approved template names,
 }
 ```
 
-The deployed secret currently has `enabled: false` and no auth key, so the functions cannot send while Meta reviews the templates. After approval, add `"authKey": "YOUR_MSG91_AUTH_KEY"` and change `enabled` to `true`. Set the new JSON with `firebase functions:secrets:set MSG91_CONFIG --project relapse-clinic-db` and paste it only into the hidden prompt; then redeploy the functions so they use the new secret version. Never put the auth key in source, a command argument, or a browser URL. The scheduler runs every five minutes and sends within the 8:00–8:14 AM window in each clinic's local timezone. A Firestore delivery record claims each message once. Failed and uncertain requests appear in the website's Appointment messages view. `accepted` means MSG91 accepted the API request, not that WhatsApp delivered it.
+The deployed secret also includes an `authKey`, stored only in Firebase Secret Manager. To rotate it, set a new `MSG91_CONFIG` version through a hidden prompt or stdin, then redeploy both functions to bind that version. Never put the auth key in source, a command argument, or a browser URL. The scheduler runs every five minutes and sends within the 8:00–8:14 AM window in each clinic's local timezone. A Firestore delivery record claims each message once. Failed and uncertain requests appear in the website's Appointment messages view. `accepted` means MSG91 accepted the API request, not that WhatsApp delivered it.
 
-Do not enable messaging until the templates are approved. The browser never receives the auth key.
+The browser never receives the auth key.
