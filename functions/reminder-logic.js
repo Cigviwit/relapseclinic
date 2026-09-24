@@ -28,6 +28,11 @@ function slotFor(appointment, local) {
   return null;
 }
 
+function missedDueNow(appointment, local) {
+  return appointment.status === 'missed' &&
+    `${local.date}T${local.time}` >= `${appointment.date}T${appointment.time}`;
+}
+
 function deliveryId(appointment, slot) {
   const fingerprint = createHash('sha256').update(JSON.stringify([
     appointment.clinicId, appointment.id, appointment.patientId,
@@ -71,4 +76,4 @@ function hasReplacementAppointment(appointment, otherAppointments) {
     other.date > appointment.date && ['scheduled', 'completed'].includes(other.status));
 }
 
-module.exports = { addDays, localNow, slotFor, deliveryId, bodyValues, msg91Payload, hasReplacementAppointment };
+module.exports = { addDays, localNow, slotFor, missedDueNow, deliveryId, bodyValues, msg91Payload, hasReplacementAppointment };

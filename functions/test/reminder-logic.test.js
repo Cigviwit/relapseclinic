@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { localNow, slotFor, deliveryId, bodyValues, msg91Payload, hasReplacementAppointment } = require('../reminder-logic');
+const { localNow, slotFor, missedDueNow, deliveryId, bodyValues, msg91Payload, hasReplacementAppointment } = require('../reminder-logic');
 
 const appointment = { id: 'a1', clinicId: 'c1', patientId: 'p1', doctorId: 'd1', date: '2026-10-10', time: '10:30', status: 'scheduled' };
 const clinic = { name: 'Greenleaf Clinic', phone: '+919876543210', doctors: [{ id: 'd1', name: 'Dr. Priya Nair' }] };
@@ -25,6 +25,14 @@ test('delivery identity changes on reschedule and remains stable for retries', (
   assert.equal(first, deliveryId(appointment, 'appointment_day'));
   assert.notEqual(first, deliveryId({ ...appointment, time: '11:00' }, 'appointment_day'));
   assert.notEqual(first, deliveryId(appointment, 'two_days_before'));
+});
+
+test('marking a past visit missed makes its first follow-up due immediately', () => {
+  const missed = { ...appointment, status: 'missed' };
+  assert.equal(missedDueNow(missed, { date: '2026-10-13', time: '15:00' }), true);
+  assert.equal(missedDueNow(missed, { date: '2026-10-10', time: '10:29' }), false);
+  assert.equal(missedDueNow(appointment, { date: '2026-10-13', time: '15:00' }), false);
+  assert.equal(deliveryId(missed, 'missed_day_one'), deliveryId(missed, 'missed_day_one'));
 });
 
 test('approved-template variables map in order and include clinic contact', () => {

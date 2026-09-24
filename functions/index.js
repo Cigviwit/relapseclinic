@@ -4,7 +4,7 @@ const { onDocumentWritten } = require('firebase-functions/v2/firestore');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
 const { defineSecret } = require('firebase-functions/params');
 const { logger } = require('firebase-functions');
-const { addDays, localNow, slotFor, deliveryId, bodyValues, msg91Payload, hasReplacementAppointment } = require('./reminder-logic');
+const { addDays, localNow, slotFor, missedDueNow, deliveryId, bodyValues, msg91Payload, hasReplacementAppointment } = require('./reminder-logic');
 
 initializeApp();
 const db = getFirestore();
@@ -24,7 +24,7 @@ function appointmentFingerprint(a) {
   return JSON.stringify([a.clinicId, a.patientId, a.doctorId, a.date, a.time]);
 }
 
-async function sendAppointment(appointmentId, slot, expectedFingerprint) {
+async function sendAppointment(appointmentId, slot, expectedFingerprint, immediateMissed = false) {
   const settings = config();
   if (!settings) return;
   const appointmentSnap = await db.doc(`appointments/${appointmentId}`).get();
@@ -48,11 +48,20 @@ async function sendAppointment(appointmentId, slot, expectedFingerprint) {
     if (hasReplacementAppointment({ ...appointment, id: appointmentId },
       otherVisits.docs.map((item) => ({ ...item.data(), id: item.id })))) return;
   }
-  if (slot !== 'booked' && slotFor(appointment, localNow(clinic.timezone, new Date())) !== slot) return;
+  const local = localNow(clinic.timezone, new Date());
+  if (immediateMissed) {
+    if (slot !== 'missed_day_one' || !missedDueNow(appointment, local)) return;
+  } else if (slot !== 'booked' && slotFor(appointment, local) !== slot) return;
   if (slot === 'two_days_before' || slot === 'appointment_day') {
     const changed = localNow(clinic.timezone, appointmentSnap.updateTime.toDate());
     const current = localNow(clinic.timezone, new Date());
     if (changed.date === current.date && changed.time >= '08:00') return;
+  }
+  if (slot === 'missed_day_seven') {
+    const firstId = deliveryId({ ...appointment, id: appointmentId }, 'missed_day_one');
+    const first = await db.doc(`messageDeliveries/${firstId}`).get();
+    const firstAt = first.data()?.createdAt?.toMillis();
+    if (firstAt && Date.now() - firstAt < 24 * 60 * 60 * 1000) return;
   }
   if (!/^\+[1-9]\d{7,14}$/.test(patient.phone)) throw new Error('Invalid patient phone');
 
@@ -109,6 +118,15 @@ exports.sendBookingConfirmation = onDocumentWritten({
   await sendAppointment(event.params.appointmentId, 'booked', appointmentFingerprint(after));
 });
 
+exports.sendMissedVisit = onDocumentWritten({
+  document: 'appointments/{appointmentId}', region, secrets: [msg91Config],
+}, async (event) => {
+  const after = event.data?.after?.data();
+  const before = event.data?.before?.data();
+  if (!after || after.status !== 'missed' || before?.status === 'missed') return;
+  await sendAppointment(event.params.appointmentId, 'missed_day_one', appointmentFingerprint(after), true);
+});
+
 exports.sendScheduledReminders = onSchedule({
   schedule: 'every 5 minutes', timeZone: 'UTC', region, secrets: [msg91Config],
   timeoutSeconds: 540, maxInstances: 1,
@@ -120,12 +138,21 @@ exports.sendScheduledReminders = onSchedule({
     let local;
     try { local = localNow(clinic.timezone, new Date()); }
     catch (error) { logger.error('Invalid clinic timezone', { clinicId: clinicDoc.id, error: String(error) }); continue; }
-    if (local.time < '08:00' || local.time >= '08:15') continue;
-    const candidateDates = [local.date, addDays(local.date, 2), addDays(local.date, -1), addDays(local.date, -7)];
+    const openingWindow = local.time >= '08:00' && local.time < '08:15';
+    const candidateDates = Array.from({ length: 8 }, (_, daysAgo) => addDays(local.date, -daysAgo));
+    candidateDates.push(addDays(local.date, 2));
     const appointments = await db.collection('appointments')
       .where('clinicId', '==', clinicDoc.id).where('date', 'in', candidateDates).get();
     for (const appointmentDoc of appointments.docs) {
       const appointment = appointmentDoc.data();
+      // Catch a recently marked Missed visit if its Firestore event was not delivered.
+      // The same delivery ID makes this safe alongside the event trigger and day-one job.
+      const ageMs = Date.now() - appointmentDoc.updateTime.toMillis();
+      if (missedDueNow(appointment, local) && ageMs >= 0 && ageMs < 24 * 60 * 60 * 1000) {
+        try { await sendAppointment(appointmentDoc.id, 'missed_day_one', undefined, true); }
+        catch (error) { logger.error('Immediate missed-visit recovery failed', { appointmentId: appointmentDoc.id, error: String(error) }); }
+      }
+      if (!openingWindow) continue;
       const slot = slotFor(appointment, local);
       if (!slot) continue;
       try { await sendAppointment(appointmentDoc.id, slot); }

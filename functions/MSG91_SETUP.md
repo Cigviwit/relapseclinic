@@ -20,7 +20,7 @@ Suggested name: `clinic_missed_visit_v1`
 Hello {{1}}, we missed you for your appointment with {{2}} at {{3}} on {{4}}. To arrange another visit, please call {{5}}. If you have already rescheduled, you can ignore this message.
 ```
 
-Variables: patient name, doctor name, clinic name, missed appointment date, clinic phone. The app sends this only after staff marks the visit **Missed**, at 8 AM one and seven days after the visit. A later scheduled or completed visit suppresses these messages.
+Variables: patient name, doctor name, clinic name, missed appointment date, clinic phone. The app sends the first missed-visit message immediately when staff marks the visit **Missed**, even if that happens days after the appointment. This replaces the next-day message. The second follow-up is due at 8 AM seven days after the original appointment, if that date is still ahead. A later scheduled or completed visit suppresses these messages.
 
 ## Server setup
 
