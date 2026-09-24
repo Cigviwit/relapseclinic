@@ -57,3 +57,11 @@
 .status.failed,.status.unknown{background:#fff0e9;color:#a04320}
 .status.sending{background:#eaf1fb;color:#315a89}
 .status.missed{background:#fff3e2;color:#915a16}
+
+.day-summary{display:flex;align-items:center;gap:24px;flex-wrap:wrap;margin:0 0 16px;padding:12px 16px;background:#fff;border:1px solid #e1e7ea;border-radius:9px;color:#526875;font-size:.875rem}
+.day-summary strong{color:#172b3b;font-size:1rem}
+.day-summary button{display:inline-flex;align-items:center;gap:5px;border:0;background:none;color:#a35c27;font-size:.875rem;padding:0}
+.calendar-layout{grid-template-columns:minmax(0,1fr)}
+.patient-field-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:.875rem;color:#445d6b;font-weight:600}
+.patient-field-heading .text-button{min-height:28px}
+@media(max-width:767px){.day-summary{gap:10px 18px}.calendar-layout{grid-template-columns:1fr}}
