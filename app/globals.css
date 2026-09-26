@@ -53,6 +53,22 @@
 .user-menu .sign-out-btn:hover{background:#fdf0f0}
 @media(max-width:600px){.auth-card{padding:28px 18px}.auth-grid-2{grid-template-columns:1fr}.auth-doctor-row{grid-template-columns:1fr;position:relative;padding-top:14px}.auth-remove-doc-btn{position:absolute;top:6px;right:6px}}
 /* Server messaging outcomes shown in the appointment message log. */
+.appointment-tracker{padding:18px 18px 12px;background:#f8fbfa;border:1px solid #dce9e5;border-radius:10px}
+.appointment-tracker h3{font-size:1rem;font-weight:700;color:#254b46}
+.appointment-tracker>.muted{font-size:.8125rem;margin:4px 0 16px}
+.tracker-steps{list-style:none;margin:0;padding:0}
+.tracker-step{display:grid;grid-template-columns:28px minmax(0,1fr);gap:10px;position:relative;min-height:70px}
+.tracker-step:not(:last-child):before{content:"";position:absolute;top:25px;bottom:-1px;left:11px;width:2px;background:#d9e5e1}
+.tracker-step.done:not(:last-child):before{background:#168b76}
+.tracker-marker{z-index:1;width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:#edf2f0;color:#81938d;border:2px solid #d9e5e1}
+.tracker-step.done .tracker-marker{background:#168b76;border-color:#168b76;color:white}
+.tracker-step.current .tracker-marker{background:#e1f3ef;border-color:#168b76;color:#087f75}
+.tracker-step.issue .tracker-marker{background:#fff1e7;border-color:#d6874c;color:#ae5b2a}
+.tracker-step strong{display:block;font-size:.875rem;color:#344f4a}
+.tracker-step small{display:block;margin-top:4px;font-size:.75rem;line-height:1.45;color:#6e827b}
+.tracker-error{display:block;font-size:.75rem;color:#a13b46;margin-top:5px;overflow-wrap:anywhere}
+.tracker-note{font-size:.8125rem;color:#975a2d;margin-bottom:15px}
+.tracker-footnote{font-size:.75rem;line-height:1.5;color:#748981;margin:0}
 .status.accepted{background:#e6f5ec;color:#146943}
 .status.failed,.status.unknown{background:#fff0e9;color:#a04320}
 .status.sending{background:#eaf1fb;color:#315a89}
