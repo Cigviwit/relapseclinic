@@ -76,4 +76,40 @@ function hasReplacementAppointment(appointment, otherAppointments) {
     other.date > appointment.date && ['scheduled', 'completed'].includes(other.status));
 }
 
-module.exports = { addDays, localNow, slotFor, missedDueNow, deliveryId, bodyValues, msg91Payload, hasReplacementAppointment };
+function digestDue(clinic, local) {
+  const time = clinic.doctorDigestTime || '18:00';
+  return clinic.doctorDigestEnabled === true && /^([01]\d|2[0-3]):[0-5]\d$/.test(time) &&
+    local.time >= time && local.time < addMinutes(time, 15);
+}
+
+function addMinutes(time, count) {
+  const total = Number(time.slice(0, 2)) * 60 + Number(time.slice(3)) + count;
+  return total >= 1440 ? '24:00' : `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+}
+
+function doctorDigest(doctor, clinic, date, appointments, patients) {
+  const visits = appointments.filter((a) => a.doctorId === doctor.id && a.status === 'scheduled')
+    .sort((a, b) => a.time.localeCompare(b.time) || a.id.localeCompare(b.id));
+  const day = new Intl.DateTimeFormat('en-IN', { timeZone: 'UTC', day: 'numeric', month: 'long', year: 'numeric' })
+    .format(new Date(`${date}T12:00:00Z`));
+  const lines = visits.map((a, i) => {
+    const patient = patients.get(a.patientId);
+    if (!patient || patient.clinicId !== clinic.id) return null;
+    const time = new Intl.DateTimeFormat('en-IN', { timeZone: 'UTC', hour: 'numeric', minute: '2-digit', hour12: true })
+      .format(new Date(`2000-01-01T${a.time}:00Z`));
+    return `${i + 1}. ${time} - ${patient.name} (${a.duration} min)`;
+  }).filter(Boolean);
+  if (lines.length !== visits.length) throw new Error('A digest appointment has no patient in this clinic');
+  const schedule = lines.length ? lines.join('\n') : 'No appointments scheduled.';
+  return {
+    count: visits.length,
+    subject: `${clinic.name}: ${visits.length} appointment${visits.length === 1 ? '' : 's'} on ${day}`,
+    text: `Hello ${doctor.name},\n\nYou have ${visits.length} appointment${visits.length === 1 ? '' : 's'} tomorrow, ${day}, at ${clinic.name}.\n\n${schedule}\n\nThis list was prepared at the scheduled send time. Check the clinic calendar for later changes.`,
+  };
+}
+
+function doctorDigestId(clinicId, doctorId, date) {
+  return createHash('sha256').update(JSON.stringify([clinicId, doctorId, date])).digest('hex');
+}
+
+module.exports = { addDays, localNow, slotFor, missedDueNow, deliveryId, bodyValues, msg91Payload, hasReplacementAppointment, digestDue, doctorDigest, doctorDigestId };

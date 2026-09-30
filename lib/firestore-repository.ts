@@ -4,6 +4,12 @@ import { type Account } from "./auth-service";
 import { type Database, type Clinic, type Patient, type Appointment, type Reminder } from "./clinic";
 
 export const firestoreRepository = {
+  subscribeDoctorDigests(account: Account, onUpdate: (records: DoctorDigestDelivery[]) => void, onError: (error: Error) => void): () => void {
+    const source = account.role === "admin"
+      ? collection(firestore, "doctorDigestDeliveries")
+      : query(collection(firestore, "doctorDigestDeliveries"), where("clinicId", "==", account.clinicId));
+    return onSnapshot(source, snapshot => onUpdate(snapshot.docs.map(item => ({ id: item.id, ...item.data() } as DoctorDigestDelivery))), onError);
+  },
   subscribeDeliveries(account: Account, onUpdate: (records: MessageDelivery[]) => void, onError: (error: Error) => void): () => void {
     const source = account.role === "admin"
       ? collection(firestore, "messageDeliveries")
@@ -56,4 +62,9 @@ export type MessageDelivery = {
   slot: string; appointmentDate: string; appointmentTime: string;
   status: 'sending' | 'accepted' | 'failed' | 'unknown'; error?: string;
   createdAt?: { toDate: () => Date }; updatedAt?: { toDate: () => Date };
+};
+
+export type DoctorDigestDelivery = {
+  id: string; clinicId: string; doctorId: string; date: string; count: number;
+  status: 'sending' | 'accepted' | 'failed' | 'unknown'; error?: string;
 };

@@ -2,7 +2,7 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     // users/{uid}: uid, email, clinicId, createdAt (strings); admin writes only.
-    // clinics/{id}: id, name, address, phone, timezone, opens, closes (strings), doctors (list).
+    // clinics/{id}: core details, doctors (with optional email addresses), optional doctor digest settings.
     // patients/{id}: id, clinicId, name, phone (strings), consent (bool).
     // appointments/{id}: id, clinicId, patientId, doctorId, date, time, reason, status (strings), duration (int).
     // reminders/{id}: id, clinicId, patientId, date, time, message, status (strings), optional sentAt/sentMessage.
@@ -17,11 +17,13 @@ service cloud.firestore {
     function optionalText(data, field, max) { return !(field in data) || text(data[field], max); }
     function validClinic(data, id) {
       return data.keys().hasAll(['id','name','address','phone','timezone','opens','closes','doctors'])
-        && data.keys().hasOnly(['id','name','address','phone','timezone','opens','closes','doctors'])
+        && data.keys().hasOnly(['id','name','address','phone','timezone','opens','closes','doctors','doctorDigestEnabled','doctorDigestTime'])
         && data.id == id && text(data.name, 100) && text(data.address, 250)
         && text(data.phone, 20) && text(data.timezone, 80)
         && text(data.opens, 5) && text(data.closes, 5)
-        && data.doctors is list && data.doctors.size() > 0 && data.doctors.size() <= 30;
+        && data.doctors is list && data.doctors.size() > 0 && data.doctors.size() <= 30
+        && (!('doctorDigestEnabled' in data) || data.doctorDigestEnabled is bool)
+        && (!('doctorDigestTime' in data) || (data.doctorDigestTime is string && data.doctorDigestTime.matches('^([01][0-9]|2[0-3]):[0-5][0-9]$')));
     }
     function validPatient(data, id) {
       return data.keys().hasAll(['id','clinicId','name','phone','consent'])
@@ -86,6 +88,10 @@ service cloud.firestore {
       allow delete: if false;
     }
     match /messageDeliveries/{id} {
+      allow get, list: if canAccess(resource.data.clinicId);
+      allow create, update, delete: if false;
+    }
+    match /doctorDigestDeliveries/{id} {
       allow get, list: if canAccess(resource.data.clinicId);
       allow create, update, delete: if false;
     }

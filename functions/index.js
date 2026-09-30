@@ -4,11 +4,12 @@ const { onDocumentWritten } = require('firebase-functions/v2/firestore');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
 const { defineSecret } = require('firebase-functions/params');
 const { logger } = require('firebase-functions');
-const { addDays, localNow, slotFor, missedDueNow, deliveryId, bodyValues, msg91Payload, hasReplacementAppointment } = require('./reminder-logic');
+const { addDays, localNow, slotFor, missedDueNow, deliveryId, bodyValues, msg91Payload, hasReplacementAppointment, digestDue, doctorDigest, doctorDigestId } = require('./reminder-logic');
 
 initializeApp();
 const db = getFirestore();
 const msg91Config = defineSecret('MSG91_CONFIG');
+const doctorEmailConfig = defineSecret('DOCTOR_EMAIL_CONFIG');
 const region = 'asia-south1';
 
 function config() {
@@ -108,6 +109,70 @@ async function sendAppointment(appointmentId, slot, expectedFingerprint, immedia
   }
 }
 
+function emailConfig() {
+  const raw = doctorEmailConfig.value();
+  if (!raw) return null;
+  const value = JSON.parse(raw);
+  if (value.enabled !== true) return null;
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.user || '') || !value.appPassword) {
+    throw new Error('DOCTOR_EMAIL_CONFIG needs a Gmail user and appPassword');
+  }
+  return value;
+}
+
+async function sendDoctorDigest(clinicId, doctorId) {
+  const settings = emailConfig();
+  if (!settings) return;
+  const clinicSnap = await db.doc(`clinics/${clinicId}`).get();
+  if (!clinicSnap.exists) return;
+  const clinic = clinicSnap.data();
+  const local = localNow(clinic.timezone, new Date());
+  if (!digestDue(clinic, local)) return;
+  const doctor = clinic.doctors.find((item) => item.id === doctorId);
+  if (!doctor?.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(doctor.email)) return;
+  const date = addDays(local.date, 1);
+  const appointments = await db.collection('appointments')
+    .where('clinicId', '==', clinicId).where('date', '==', date).get();
+  const visits = appointments.docs.map((item) => ({ ...item.data(), id: item.id }));
+  const patientIds = [...new Set(visits.filter((a) => a.doctorId === doctorId && a.status === 'scheduled').map((a) => a.patientId))];
+  const patientDocs = await Promise.all(patientIds.map((id) => db.doc(`patients/${id}`).get()));
+  const patients = new Map(patientDocs.filter((snap) => snap.exists).map((snap) => [snap.id, snap.data()]));
+  const digest = doctorDigest(doctor, clinic, date, visits, patients);
+  const id = doctorDigestId(clinicId, doctorId, date);
+  const ref = db.doc(`doctorDigestDeliveries/${id}`);
+  const claimed = await db.runTransaction(async (tx) => {
+    const existing = await tx.get(ref);
+    if (existing.exists) return false;
+    tx.create(ref, { clinicId, doctorId, date, count: digest.count, status: 'sending', createdAt: FieldValue.serverTimestamp() });
+    return true;
+  });
+  if (!claimed) return;
+  try {
+    const nodemailer = require('nodemailer');
+    const transport = nodemailer.createTransport({
+      host: 'smtp.gmail.com', port: 465, secure: true,
+      auth: { user: settings.user, pass: settings.appPassword },
+      connectionTimeout: 20000, greetingTimeout: 10000, socketTimeout: 30000,
+    });
+    const result = await transport.sendMail({
+      from: { name: 'RelapseClinic', address: settings.user },
+      to: doctor.email, subject: digest.subject, text: digest.text,
+    });
+    if (!result.accepted?.some((address) => address.toLowerCase() === doctor.email.toLowerCase())) {
+      await ref.update({ status: 'failed', error: 'Gmail did not accept the recipient',
+        updatedAt: FieldValue.serverTimestamp() });
+      return;
+    }
+    await ref.update({ status: 'accepted', providerMessageId: String(result.messageId || ''),
+      updatedAt: FieldValue.serverTimestamp() });
+  } catch (error) {
+    // An SMTP connection can fail after Gmail accepts the message. Do not retry blindly.
+    await ref.update({ status: 'unknown', error: String(error.message).slice(0, 300),
+      updatedAt: FieldValue.serverTimestamp() });
+    logger.error('Doctor digest outcome unknown', { clinicId, doctorId, date, error: String(error.message) });
+  }
+}
+
 exports.sendBookingConfirmation = onDocumentWritten({
   document: 'appointments/{appointmentId}', region, secrets: [msg91Config],
 }, async (event) => {
@@ -128,10 +193,12 @@ exports.sendMissedVisit = onDocumentWritten({
 });
 
 exports.sendScheduledReminders = onSchedule({
-  schedule: 'every 5 minutes', timeZone: 'UTC', region, secrets: [msg91Config],
+  schedule: 'every 5 minutes', timeZone: 'UTC', region, secrets: [msg91Config, doctorEmailConfig],
   timeoutSeconds: 540, maxInstances: 1,
 }, async () => {
-  if (!config()) return;
+  const patientMessagingEnabled = !!config();
+  const doctorEmailEnabled = !!emailConfig();
+  if (!patientMessagingEnabled && !doctorEmailEnabled) return;
   const clinics = await db.collection('clinics').get();
   for (const clinicDoc of clinics.docs) {
     const clinic = clinicDoc.data();
@@ -141,22 +208,30 @@ exports.sendScheduledReminders = onSchedule({
     const openingWindow = local.time >= '08:00' && local.time < '08:15';
     const candidateDates = Array.from({ length: 8 }, (_, daysAgo) => addDays(local.date, -daysAgo));
     candidateDates.push(addDays(local.date, 2));
-    const appointments = await db.collection('appointments')
-      .where('clinicId', '==', clinicDoc.id).where('date', 'in', candidateDates).get();
-    for (const appointmentDoc of appointments.docs) {
-      const appointment = appointmentDoc.data();
-      // Catch a recently marked Missed visit if its Firestore event was not delivered.
-      // The same delivery ID makes this safe alongside the event trigger and day-one job.
-      const ageMs = Date.now() - appointmentDoc.updateTime.toMillis();
-      if (missedDueNow(appointment, local) && ageMs >= 0 && ageMs < 24 * 60 * 60 * 1000) {
-        try { await sendAppointment(appointmentDoc.id, 'missed_day_one', undefined, true); }
-        catch (error) { logger.error('Immediate missed-visit recovery failed', { appointmentId: appointmentDoc.id, error: String(error) }); }
+    if (patientMessagingEnabled) {
+      const appointments = await db.collection('appointments')
+        .where('clinicId', '==', clinicDoc.id).where('date', 'in', candidateDates).get();
+      for (const appointmentDoc of appointments.docs) {
+        const appointment = appointmentDoc.data();
+        // Catch a recently marked Missed visit if its Firestore event was not delivered.
+        // The same delivery ID makes this safe alongside the event trigger and day-one job.
+        const ageMs = Date.now() - appointmentDoc.updateTime.toMillis();
+        if (missedDueNow(appointment, local) && ageMs >= 0 && ageMs < 24 * 60 * 60 * 1000) {
+          try { await sendAppointment(appointmentDoc.id, 'missed_day_one', undefined, true); }
+          catch (error) { logger.error('Immediate missed-visit recovery failed', { appointmentId: appointmentDoc.id, error: String(error) }); }
+        }
+        if (!openingWindow) continue;
+        const slot = slotFor(appointment, local);
+        if (!slot) continue;
+        try { await sendAppointment(appointmentDoc.id, slot); }
+        catch (error) { logger.error('Reminder processing failed', { appointmentId: appointmentDoc.id, slot, error: String(error) }); }
       }
-      if (!openingWindow) continue;
-      const slot = slotFor(appointment, local);
-      if (!slot) continue;
-      try { await sendAppointment(appointmentDoc.id, slot); }
-      catch (error) { logger.error('Reminder processing failed', { appointmentId: appointmentDoc.id, slot, error: String(error) }); }
+    }
+    if (doctorEmailEnabled && digestDue(clinic, local)) {
+      for (const doctor of clinic.doctors) {
+        try { await sendDoctorDigest(clinicDoc.id, doctor.id); }
+        catch (error) { logger.error('Doctor digest processing failed', { clinicId: clinicDoc.id, doctorId: doctor.id, error: String(error) }); }
+      }
     }
   }
 });
