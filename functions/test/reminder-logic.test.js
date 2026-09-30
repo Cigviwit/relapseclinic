@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { localNow, slotFor, missedDueNow, deliveryId, bodyValues, msg91Payload, hasReplacementAppointment, digestDue, doctorDigest, doctorDigestId } = require('../reminder-logic');
+const { localNow, slotFor, missedDueNow, deliveryId, bodyValues, msg91Payload, hasReplacementAppointment, digestDue, doctorDigest, doctorDigestId, manualDoctorDigestId } = require('../reminder-logic');
 
 const appointment = { id: 'a1', clinicId: 'c1', patientId: 'p1', doctorId: 'd1', date: '2026-10-10', time: '10:30', status: 'scheduled' };
 const clinic = { name: 'Greenleaf Clinic', phone: '+919876543210', doctors: [{ id: 'd1', name: 'Dr. Priya Nair' }] };
@@ -73,6 +73,9 @@ test('doctor digest uses clinic-local send time and only the assigned scheduled 
   assert.doesNotMatch(result.text, /a3|a4/);
   assert.equal(doctorDigestId('c1', 'd1', '2026-10-10'), doctorDigestId('c1', 'd1', '2026-10-10'));
   assert.notEqual(doctorDigestId('c1', 'd1', '2026-10-10'), doctorDigestId('c1', 'd1', '2026-10-11'));
+  assert.equal(manualDoctorDigestId('c1', 'd1', '2026-10-10', 'request-1'), manualDoctorDigestId('c1', 'd1', '2026-10-10', 'request-1'));
+  assert.notEqual(manualDoctorDigestId('c1', 'd1', '2026-10-10', 'request-1'), doctorDigestId('c1', 'd1', '2026-10-10'));
+  assert.notEqual(manualDoctorDigestId('c1', 'd1', '2026-10-10', 'request-1'), manualDoctorDigestId('c1', 'd1', '2026-10-10', 'request-2'));
 });
 
 test('doctor with no appointments still receives a zero-count digest', () => {

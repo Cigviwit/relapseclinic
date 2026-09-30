@@ -4,6 +4,8 @@ Clinic settings can enable a daily digest and choose its send time (default **6:
 
 The Firebase scheduler checks every five minutes and sends once per doctor and appointment date. Delivery records are in `doctorDigestDeliveries`; the clinic can see accepted, failed, and uncertain outcomes in Clinic settings. Gmail accepting an SMTP message does not prove inbox delivery. An uncertain request is not retried automatically because Gmail may have already accepted it.
 
+Clinic settings also has **Send tomorrow’s digest now**. It immediately sends a fresh next-day snapshot to every doctor with a valid email, including a zero-count digest when a doctor has no visits. It works independently of the daily schedule and can send again after the scheduled email. Manual attempts appear in the same activity list and are marked as manual. The action requires a signed-in admin or a user assigned to that clinic. Each click uses a unique request ID so network retries of the same request do not duplicate emails.
+
 ## Gmail SMTP setup
 
 This implementation sends through `smtp.gmail.com` on port 465 with TLS. Turn on [Google 2-Step Verification](https://support.google.com/accounts/answer/185833?hl=en) for the sending account and generate an app password. Set the Firebase Secret Manager secret `DOCTOR_EMAIL_CONFIG` to a JSON object:

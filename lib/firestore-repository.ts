@@ -67,4 +67,5 @@ export type MessageDelivery = {
 export type DoctorDigestDelivery = {
   id: string; clinicId: string; doctorId: string; date: string; count: number;
   status: 'sending' | 'accepted' | 'failed' | 'unknown'; error?: string;
+  mode?: 'scheduled' | 'manual'; createdAt?: { toDate: () => Date };
 };

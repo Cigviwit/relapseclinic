@@ -2,9 +2,10 @@ const { initializeApp } = require('firebase-admin/app');
 const { getFirestore, FieldValue } = require('firebase-admin/firestore');
 const { onDocumentWritten } = require('firebase-functions/v2/firestore');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
+const { onCall, HttpsError } = require('firebase-functions/v2/https');
 const { defineSecret } = require('firebase-functions/params');
 const { logger } = require('firebase-functions');
-const { addDays, localNow, slotFor, missedDueNow, deliveryId, bodyValues, msg91Payload, hasReplacementAppointment, digestDue, doctorDigest, doctorDigestId } = require('./reminder-logic');
+const { addDays, localNow, slotFor, missedDueNow, deliveryId, bodyValues, msg91Payload, hasReplacementAppointment, digestDue, doctorDigest, doctorDigestId, manualDoctorDigestId } = require('./reminder-logic');
 
 initializeApp();
 const db = getFirestore();
@@ -120,16 +121,16 @@ function emailConfig() {
   return value;
 }
 
-async function sendDoctorDigest(clinicId, doctorId) {
+async function sendDoctorDigest(clinicId, doctorId, options = {}) {
   const settings = emailConfig();
-  if (!settings) return;
+  if (!settings) return 'skipped';
   const clinicSnap = await db.doc(`clinics/${clinicId}`).get();
-  if (!clinicSnap.exists) return;
+  if (!clinicSnap.exists) return 'skipped';
   const clinic = clinicSnap.data();
   const local = localNow(clinic.timezone, new Date());
-  if (!digestDue(clinic, local)) return;
+  if (!options.manual && !digestDue(clinic, local)) return 'skipped';
   const doctor = clinic.doctors.find((item) => item.id === doctorId);
-  if (!doctor?.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(doctor.email)) return;
+  if (!doctor?.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(doctor.email)) return 'skipped';
   const date = addDays(local.date, 1);
   const appointments = await db.collection('appointments')
     .where('clinicId', '==', clinicId).where('date', '==', date).get();
@@ -138,15 +139,20 @@ async function sendDoctorDigest(clinicId, doctorId) {
   const patientDocs = await Promise.all(patientIds.map((id) => db.doc(`patients/${id}`).get()));
   const patients = new Map(patientDocs.filter((snap) => snap.exists).map((snap) => [snap.id, snap.data()]));
   const digest = doctorDigest(doctor, clinic, date, visits, patients);
-  const id = doctorDigestId(clinicId, doctorId, date);
+  const id = options.manual
+    ? manualDoctorDigestId(clinicId, doctorId, date, options.requestId)
+    : doctorDigestId(clinicId, doctorId, date);
   const ref = db.doc(`doctorDigestDeliveries/${id}`);
   const claimed = await db.runTransaction(async (tx) => {
     const existing = await tx.get(ref);
     if (existing.exists) return false;
-    tx.create(ref, { clinicId, doctorId, date, count: digest.count, status: 'sending', createdAt: FieldValue.serverTimestamp() });
+    tx.create(ref, { clinicId, doctorId, date, count: digest.count, status: 'sending',
+      mode: options.manual ? 'manual' : 'scheduled',
+      ...(options.manual ? { requestedBy: options.requestedBy, requestId: options.requestId } : {}),
+      createdAt: FieldValue.serverTimestamp() });
     return true;
   });
-  if (!claimed) return;
+  if (!claimed) return 'already_sent';
   try {
     const nodemailer = require('nodemailer');
     const transport = nodemailer.createTransport({
@@ -161,17 +167,58 @@ async function sendDoctorDigest(clinicId, doctorId) {
     if (!result.accepted?.some((address) => address.toLowerCase() === doctor.email.toLowerCase())) {
       await ref.update({ status: 'failed', error: 'Gmail did not accept the recipient',
         updatedAt: FieldValue.serverTimestamp() });
-      return;
+      return 'failed';
     }
     await ref.update({ status: 'accepted', providerMessageId: String(result.messageId || ''),
       updatedAt: FieldValue.serverTimestamp() });
+    return 'accepted';
   } catch (error) {
     // An SMTP connection can fail after Gmail accepts the message. Do not retry blindly.
     await ref.update({ status: 'unknown', error: String(error.message).slice(0, 300),
       updatedAt: FieldValue.serverTimestamp() });
     logger.error('Doctor digest outcome unknown', { clinicId, doctorId, date, error: String(error.message) });
+    return 'unknown';
   }
 }
+
+exports.sendDoctorDigestNow = onCall({
+  region, secrets: [doctorEmailConfig], timeoutSeconds: 540, maxInstances: 2,
+}, async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) throw new HttpsError('unauthenticated', 'Sign in to send doctor digests.');
+  const { clinicId, requestId } = request.data || {};
+  if (typeof clinicId !== 'string' || !/^[A-Za-z0-9_-]{1,100}$/.test(clinicId) ||
+      typeof requestId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(requestId)) {
+    throw new HttpsError('invalid-argument', 'A valid clinic and request ID are required.');
+  }
+  if (uid !== 'zfXlb9MEMQSQDBNYOk5RJFDJcZo1') {
+    const profile = await db.doc(`users/${uid}`).get();
+    if (!profile.exists || profile.data().clinicId !== clinicId) {
+      throw new HttpsError('permission-denied', 'You cannot send digests for this clinic.');
+    }
+  }
+  const clinicSnap = await db.doc(`clinics/${clinicId}`).get();
+  if (!clinicSnap.exists) throw new HttpsError('not-found', 'Clinic not found.');
+  const doctors = clinicSnap.data().doctors;
+  if (!Array.isArray(doctors) || doctors.length === 0) {
+    throw new HttpsError('failed-precondition', 'Add a doctor before sending a digest.');
+  }
+  if (doctors.some((doctor) => !doctor.id || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(doctor.email || ''))) {
+    throw new HttpsError('failed-precondition', 'Each doctor needs a valid email address.');
+  }
+  if (!emailConfig()) throw new HttpsError('failed-precondition', 'Doctor email sending is not configured.');
+  const results = { accepted: 0, failed: 0, unknown: 0, already_sent: 0 };
+  for (const doctor of doctors) {
+    try {
+      const status = await sendDoctorDigest(clinicId, doctor.id, { manual: true, requestId, requestedBy: uid });
+      if (status in results) results[status] += 1;
+    } catch (error) {
+      logger.error('Manual doctor digest failed', { clinicId, doctorId: doctor.id, error: String(error) });
+      results.failed += 1;
+    }
+  }
+  return { date: addDays(localNow(clinicSnap.data().timezone, new Date()).date, 1), ...results };
+});
 
 exports.sendBookingConfirmation = onDocumentWritten({
   document: 'appointments/{appointmentId}', region, secrets: [msg91Config],

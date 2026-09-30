@@ -104,7 +104,7 @@ function doctorDigest(doctor, clinic, date, appointments, patients) {
   return {
     count: visits.length,
     subject: `${clinic.name}: ${visits.length} appointment${visits.length === 1 ? '' : 's'} on ${day}`,
-    text: `Hello ${doctor.name},\n\nYou have ${visits.length} appointment${visits.length === 1 ? '' : 's'} tomorrow, ${day}, at ${clinic.name}.\n\n${schedule}\n\nThis list was prepared at the scheduled send time. Check the clinic calendar for later changes.`,
+    text: `Hello ${doctor.name},\n\nYou have ${visits.length} appointment${visits.length === 1 ? '' : 's'} tomorrow, ${day}, at ${clinic.name}.\n\n${schedule}\n\nThis list was prepared when this email was sent. Check the clinic calendar for later changes.`,
   };
 }
 
@@ -112,4 +112,8 @@ function doctorDigestId(clinicId, doctorId, date) {
   return createHash('sha256').update(JSON.stringify([clinicId, doctorId, date])).digest('hex');
 }
 
-module.exports = { addDays, localNow, slotFor, missedDueNow, deliveryId, bodyValues, msg91Payload, hasReplacementAppointment, digestDue, doctorDigest, doctorDigestId };
+function manualDoctorDigestId(clinicId, doctorId, date, requestId) {
+  return createHash('sha256').update(JSON.stringify(['manual', clinicId, doctorId, date, requestId])).digest('hex');
+}
+
+module.exports = { addDays, localNow, slotFor, missedDueNow, deliveryId, bodyValues, msg91Payload, hasReplacementAppointment, digestDue, doctorDigest, doctorDigestId, manualDoctorDigestId };
