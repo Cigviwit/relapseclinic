@@ -5,7 +5,7 @@ const { onSchedule } = require('firebase-functions/v2/scheduler');
 const { onCall, HttpsError } = require('firebase-functions/v2/https');
 const { defineSecret } = require('firebase-functions/params');
 const { logger } = require('firebase-functions');
-const { addDays, localNow, slotFor, missedDueNow, deliveryId, bodyValues, msg91Payload, hasReplacementAppointment, digestDue, doctorDigest, doctorDigestId, manualDoctorDigestId } = require('./reminder-logic');
+const { addDays, localNow, slotFor, missedDueNow, deliveryId, appointmentMessage, msg91Payload, hasReplacementAppointment, digestDue, doctorDigest, doctorDigestId, manualDoctorDigestId } = require('./reminder-logic');
 
 initializeApp();
 const db = getFirestore();
@@ -81,10 +81,20 @@ async function sendAppointment(appointmentId, slot, expectedFingerprint, immedia
   });
   if (!claimed) return;
 
-  const templateName = slot.startsWith('missed_') ? settings.missedTemplate : settings.appointmentTemplate;
+  let message;
   try {
-    const payload = msg91Payload(settings, patient.phone, templateName,
-      bodyValues(appointment, patient, clinic, slot), id);
+    message = appointmentMessage(settings, appointment, patient, clinic, slot);
+  } catch (error) {
+    await ref.update({ status: 'failed', error: String(error.message).slice(0, 300),
+      patientLanguage: patient.language || 'en', updatedAt: FieldValue.serverTimestamp() });
+    logger.error('Appointment message template configuration failed', { deliveryId: id });
+    return;
+  }
+  try {
+    await ref.update({ patientLanguage: message.preference, templateName: message.templateName,
+      templateLanguage: message.language });
+    const payload = msg91Payload({ ...settings, language: message.language }, patient.phone,
+      message.templateName, message.values, id);
     const response = await fetch('https://api.msg91.com/api/v5/whatsapp/whatsapp-outbound-message/bulk/', {
       method: 'POST',
       headers: { authkey: settings.authKey, 'content-type': 'application/json', accept: 'application/json' },

@@ -1,0 +1,22 @@
+{
+  "mr": {
+    "appointment": {
+      "name": "clinic_appointment_en_mr_v1",
+      "body": "Hello {{1}}, your appointment at {{2}} with {{3}} is scheduled for {{4}} at {{5}}. If you need to reschedule, please call {{6}}. Thank you.\n\nनमस्कार {{7}}, {{8}} येथे {{9}} यांच्यासोबत तुमची भेट {{10}} रोजी {{11}} वाजता ठरलेली आहे. भेटीची वेळ बदलायची असल्यास कृपया {{12}} वर फोन करा. धन्यवाद."
+    },
+    "missed": {
+      "name": "clinic_missed_visit_en_mr_v1",
+      "body": "Hello {{1}}, we missed you for your appointment with {{2}} at {{3}} on {{4}}. To arrange another visit, please call {{5}}. If you have already rescheduled, you can ignore this message.\n\nनमस्कार {{6}}, {{7}} येथे {{8}} यांच्यासोबत {{9}} रोजी ठरलेल्या भेटीसाठी तुम्ही येऊ शकला नाहीत. दुसरी भेट ठरवण्यासाठी कृपया {{10}} वर फोन करा. तुम्ही आधीच नवीन भेट ठरवली असल्यास या संदेशाकडे दुर्लक्ष करा."
+    }
+  },
+  "hi": {
+    "appointment": {
+      "name": "clinic_appointment_en_hi_v1",
+      "body": "Hello {{1}}, your appointment at {{2}} with {{3}} is scheduled for {{4}} at {{5}}. If you need to reschedule, please call {{6}}. Thank you.\n\nनमस्ते {{7}}, {{8}} में {{9}} के साथ आपकी मुलाकात {{10}} को {{11}} बजे तय है. समय बदलने के लिए कृपया {{12}} पर फोन करें. धन्यवाद."
+    },
+    "missed": {
+      "name": "clinic_missed_visit_en_hi_v1",
+      "body": "Hello {{1}}, we missed you for your appointment with {{2}} at {{3}} on {{4}}. To arrange another visit, please call {{5}}. If you have already rescheduled, you can ignore this message.\n\nनमस्ते {{6}}, {{7}} में {{8}} के साथ {{9}} को तय मुलाकात के लिए आप नहीं आ सके. दूसरी मुलाकात तय करने के लिए कृपया {{10}} पर फोन करें. यदि आपने पहले ही नई मुलाकात तय कर ली है, तो इस संदेश को अनदेखा करें."
+    }
+  }
+}

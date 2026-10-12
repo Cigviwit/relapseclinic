@@ -1,4 +1,5 @@
 const { createHash } = require('node:crypto');
+const bilingualConfig = require('./bilingual-config.json');
 
 function addDays(date, days) {
   const value = new Date(`${date}T12:00:00Z`);
@@ -50,6 +51,34 @@ function bodyValues(appointment, patient, clinic, slot) {
   const time = new Intl.DateTimeFormat('en-IN', { timeZone: 'UTC', hour: 'numeric', minute: '2-digit', hour12: true })
     .format(new Date(`2000-01-01T${appointment.time}:00Z`));
   return [patient.name, clinic.name, doctor, day, time, clinic.phone];
+}
+
+// Each bilingual template contains the full English body, followed by its
+// translation. The translated body has its own consecutively numbered variables.
+function appointmentMessage(config, appointment, patient, clinic, slot) {
+  const preference = patient.language || 'en';
+  if (!['en', 'mr', 'hi'].includes(preference)) {
+    throw new Error('Unsupported patient message language');
+  }
+  const missed = slot.startsWith('missed_');
+  const key = missed ? 'missedTemplate' : 'appointmentTemplate';
+  const selected = preference === 'en' ? config : (config.bilingualTemplates?.[preference] ?? bilingualConfig[preference]);
+  if (!selected || typeof selected[key] !== 'string' || !selected[key].trim() ||
+      (preference !== 'en' && (typeof selected.language !== 'string' || !selected.language.trim()))) {
+    throw new Error(`MSG91_CONFIG needs an approved English + ${preference} ${key} and its language code`);
+  }
+  const englishValues = bodyValues(appointment, patient, clinic, slot);
+  const values = [...englishValues];
+  if (preference !== 'en') {
+    const translatedValues = [...englishValues];
+    if (missed) [translatedValues[1], translatedValues[2]] = [englishValues[2], englishValues[1]];
+    // Numeric dates avoid English month names in the translated paragraph.
+    const [year, month, day] = appointment.date.split('-');
+    translatedValues[3] = `${day}/${month}/${year}`;
+    if (!missed) translatedValues[4] = appointment.time;
+    values.push(...translatedValues);
+  }
+  return { templateName: selected[key], language: selected.language || 'en', preference, values };
 }
 
 function msg91Payload(config, to, templateName, values, deliveryIdValue) {
@@ -116,4 +145,4 @@ function manualDoctorDigestId(clinicId, doctorId, date, requestId) {
   return createHash('sha256').update(JSON.stringify(['manual', clinicId, doctorId, date, requestId])).digest('hex');
 }
 
-module.exports = { addDays, localNow, slotFor, missedDueNow, deliveryId, bodyValues, msg91Payload, hasReplacementAppointment, digestDue, doctorDigest, doctorDigestId, manualDoctorDigestId };
+module.exports = { addDays, localNow, slotFor, missedDueNow, deliveryId, bodyValues, appointmentMessage, msg91Payload, hasReplacementAppointment, digestDue, doctorDigest, doctorDigestId, manualDoctorDigestId };

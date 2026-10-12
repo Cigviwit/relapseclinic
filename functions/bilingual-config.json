@@ -1,0 +1,12 @@
+{
+  "mr": {
+    "language": "mr",
+    "appointmentTemplate": "clinic_appointment_en_mr_v1",
+    "missedTemplate": "clinic_missed_visit_en_mr_v1"
+  },
+  "hi": {
+    "language": "hi",
+    "appointmentTemplate": "clinic_appointment_en_hi_v1",
+    "missedTemplate": "clinic_missed_visit_en_hi_v1"
+  }
+}

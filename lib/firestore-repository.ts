@@ -61,6 +61,7 @@ export type MessageDelivery = {
   id: string; clinicId: string; appointmentId: string; patientId: string;
   slot: string; appointmentDate: string; appointmentTime: string;
   status: 'sending' | 'accepted' | 'failed' | 'unknown'; error?: string;
+  patientLanguage?: Patient['language']; templateName?: string; templateLanguage?: string;
   createdAt?: { toDate: () => Date }; updatedAt?: { toDate: () => Date };
 };
 

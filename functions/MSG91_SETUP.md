@@ -40,3 +40,7 @@ Use the integrated WhatsApp number, template namespace, approved template names,
 The deployed secret also includes an `authKey`, stored only in Firebase Secret Manager. To rotate it, set a new `MSG91_CONFIG` version through a hidden prompt or stdin, then redeploy both functions to bind that version. Never put the auth key in source, a command argument, or a browser URL. The scheduler runs every five minutes and sends within the 8:00–8:14 AM window in each clinic's local timezone. A Firestore delivery record claims each message once. Failed and uncertain requests appear in the website's Appointment messages view. `accepted` means MSG91 accepted the API request, not that WhatsApp delivered it.
 
 The browser never receives the auth key.
+
+## Patient message languages
+
+For English-first Marathi and Hindi messages, follow [BILINGUAL_TEMPLATES.md](BILINGUAL_TEMPLATES.md). It includes all four additional template bodies, sample placeholder values and the `bilingualTemplates` secret configuration. English-only patients continue to use the two existing templates.

@@ -3,7 +3,7 @@ service cloud.firestore {
   match /databases/{database}/documents {
     // users/{uid}: uid, email, clinicId, createdAt (strings); admin writes only.
     // clinics/{id}: core details, doctors (with optional email addresses), optional doctor digest settings.
-    // patients/{id}: id, clinicId, name, phone (strings), consent (bool).
+    // patients/{id}: id, clinicId, name, phone (strings), consent (bool), optional language (en/mr/hi).
     // appointments/{id}: id, clinicId, patientId, doctorId, date, time, reason, status (strings), duration (int).
     // reminders/{id}: id, clinicId, patientId, date, time, message, status (strings), optional sentAt/sentMessage.
     function signedIn() { return request.auth != null; }
@@ -27,9 +27,10 @@ service cloud.firestore {
     }
     function validPatient(data, id) {
       return data.keys().hasAll(['id','clinicId','name','phone','consent'])
-        && data.keys().hasOnly(['id','clinicId','name','phone','consent'])
+        && data.keys().hasOnly(['id','clinicId','name','phone','consent','language'])
         && data.id == id && text(data.clinicId, 100) && text(data.name, 100)
-        && text(data.phone, 20) && data.consent is bool;
+        && text(data.phone, 20) && data.consent is bool
+        && (!('language' in data) || data.language in ['en','mr','hi']);
     }
     function validAppointment(data, id) {
       return data.keys().hasAll(['id','clinicId','patientId','doctorId','date','time','duration','reason','status'])
