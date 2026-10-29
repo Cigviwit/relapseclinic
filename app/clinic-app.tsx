@@ -1,131 +1,250 @@
 "use client";
-import { patientLanguageLabel } from '@/lib/patient-language';
-import { useEffect, useState } from 'react';
-import { CalendarDays, Users, MessageCircle, Settings, Plus, ChevronLeft, ChevronRight, ArrowUpRight, HeartPulse, Clock3, Building2, Search, ArrowLeft, Check, X, Pencil, LogOut } from 'lucide-react';
-import { Sidebar, SidebarProvider, SidebarContent } from '@/components/ui/sidebar';
-import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
-import { AlertDialog, AlertDialogContent, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction } from '@/components/ui/alert-dialog';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Empty, EmptyTitle, EmptyDescription } from '@/components/ui/empty';
-import { Skeleton } from '@/components/ui/skeleton';
-import { Input } from '@/components/ui/input';
-import { Toaster } from '@/components/ui/sonner';
-import { toast } from 'sonner';
-import { getFunctions, httpsCallable } from 'firebase/functions';
-import { app } from '@/lib/firebase';
-import { Pick, PatientForm, AppointmentForm, ClinicForm } from '@/components/clinic-forms';
-import { type Database, type Appointment, type Patient, type Clinic, today, addDays, dateLabel, clockLabel, initials, reminderStatus, reminderMessage, validateAppointment, minutes, zonedNow } from '@/lib/clinic';
-import { firestoreRepository, type MessageDelivery, type DoctorDigestDelivery } from '@/lib/firestore-repository';
-import { searchPatients } from '@/lib/patient-search';
+import { lazy, Suspense, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { BarChart3, CalendarDays, CalendarPlus, FileText, Home, LogOut, MessageCircle, Search, Settings, Users } from 'lucide-react';
+import { Toaster, toast } from 'sonner';
+import { type Appointment, type Database, type Patient, clockLabel, initials, validateAppointment, zonedNow } from '@/lib/clinic';
+import { firestoreRepository, type DoctorDigestDelivery, type MessageDelivery, type Repository } from '@/lib/firestore-repository';
+import { createDemoRepository, demoAccount, isDemoMode } from '@/lib/demo-repository';
 import { authService, getAccount, type Account } from '@/lib/auth-service';
+import { blankPrescription, repeatPrescription, type Prescription } from '@/lib/prescription';
+import { unresolvedVisits } from '@/lib/unresolved';
 import AuthView from '@/components/auth/auth-view';
-import AdminCreateClinic from '@/components/auth/admin-create-clinic';
-import { AppointmentTimeline } from '@/components/appointment-timeline';
+import { Logo } from '@/components/logo';
+import { Kbd, Modal, Select } from '@/components/kit';
+import { AppointmentForm, PatientForm } from '@/components/clinic-forms';
+import TodayView from '@/components/workspace/today-view';
+import PatientsView from '@/components/workspace/patients-view';
+import AppointmentDrawer from '@/components/workspace/appointment-drawer';
+import type { BookOptions, Page, RxOptions, Workspace } from '@/components/workspace/types';
 
-const nav=[{icon:CalendarDays,label:'Calendar'},{icon:Users,label:'Patients'},{icon:MessageCircle,label:'Reminders'},{icon:Settings,label:'Clinic settings'}];
-type Modal={kind:'appointment';item?:Appointment;patientId?:string}|{kind:'patient';item?:Patient}|{kind:'clinic'}|null;
-const statusLabel=(s:string)=>({'scheduled':'Scheduled','completed':'Completed','cancelled':'Cancelled','due':'Due now','simulated-sent':'Simulated sent','missed':'Missed'}[s]||s);
-export default function ClinicApp(){
- const [account,setAccount]=useState<Account|null>(null);
- const [deliveries,setDeliveries]=useState<MessageDelivery[]>([]);
- const [doctorDigests,setDoctorDigests]=useState<DoctorDigestDelivery[]>([]);
- const [sendingDigest,setSendingDigest]=useState(false);
- const [authChecking,setAuthChecking]=useState(true);
- const [selectedClinicId,setSelectedClinicId]=useState('');
- const [db,setDb]=useState<Database|null>(null),[loadError,setLoadError]=useState(''),[page,setPage]=useState('Calendar'),[date,setDate]=useState(''),[view,setView]=useState('Agenda'),[doctor,setDoctor]=useState('all'),[search,setSearch]=useState(''),[modal,setModal]=useState<Modal>(null),[detail,setDetail]=useState<Appointment|null>(null),[patientDetail,setPatientDetail]=useState<string|null>(null),[confirm,setConfirm]=useState<{title:string;description:string;action:()=>void}|null>(null),[,setTick]=useState(0);
+// Less-used screens load on demand so the first paint stays small.
+const ScheduleView = lazy(() => import('@/components/workspace/schedule-view'));
+const ImpactView = lazy(() => import('@/components/workspace/impact-view'));
+const SettingsView = lazy(() => import('@/components/workspace/settings-view'));
+const PrescriptionBuilder = lazy(() => import('@/components/prescription/prescription-builder'));
+const CommandPalette = lazy(() => import('@/components/workspace/command-palette'));
+const AdminCreateClinic = lazy(() => import('@/components/auth/admin-create-clinic'));
+const RecordsViews = { Prescriptions: lazy(() => import('@/components/workspace/records-views').then(m => ({ default: m.PrescriptionsView }))), Messages: lazy(() => import('@/components/workspace/records-views').then(m => ({ default: m.MessagesView }))) };
 
- useEffect(()=>{
-  const unsub=authService.subscribeAuthState(async(user)=>{
-   if (!user) { setAccount(null); setDb(null); setAuthChecking(false); return; }
-   try { setAccount(await getAccount(user)); setLoadError(''); }
-   catch (error) { setLoadError((error as Error).message); setAccount(null); }
-   finally { setAuthChecking(false); }
-  });
-  return ()=>unsub();
- },[]);
+const pages: { id: Page; label: string; icon: React.ReactNode }[] = [
+  { id: 'today', label: 'Today', icon: <Home size={19} /> },
+  { id: 'schedule', label: 'Schedule', icon: <CalendarDays size={19} /> },
+  { id: 'patients', label: 'Patients', icon: <Users size={19} /> },
+  { id: 'rx', label: 'Prescriptions', icon: <FileText size={19} /> },
+  { id: 'messages', label: 'Messages', icon: <MessageCircle size={19} /> },
+  { id: 'impact', label: 'Impact', icon: <BarChart3 size={19} /> },
+  { id: 'settings', label: 'Settings', icon: <Settings size={19} /> },
+];
+// The page lives in the URL hash (#patients/<id>) so refresh and back/forward keep your place.
+const subscribeHash = (fn: () => void) => { window.addEventListener('hashchange', fn); return () => window.removeEventListener('hashchange', fn); };
+const useHash = () => useSyncExternalStore(subscribeHash, () => location.hash, () => '');
+const setHash = (p: Page, id?: string) => { location.hash = '#' + p + (id ? '/' + id : ''); };
+const noSubscribe = () => () => {};
 
- useEffect(()=>{
-  if (!account) return;
-  let hasLoadedFirst = false;
-  const unsub = firestoreRepository.subscribeDatabase(account,
-   (remoteDb) => {
-    setDb(remoteDb);
-     if (!hasLoadedFirst && remoteDb.clinics.length) {
-      hasLoadedFirst = true;
-      const activeClinic = remoteDb.clinics.find(c => c.id === remoteDb.activeClinicId) || remoteDb.clinics[0];
-      setDate(today(activeClinic?.timezone));
-    }
-    setLoadError('');
-   },
-    (err) => setLoadError(err.message)
-  );
-  const timer = setInterval(() => setTick(t => t + 1), 30000);
-  return () => {
-   unsub();
-   clearInterval(timer);
-  };
-  }, [account]);
- useEffect(()=>{if(!account)return;return firestoreRepository.subscribeDeliveries(account,setDeliveries,e=>setLoadError(e.message))},[account]);
- useEffect(()=>{if(!account)return;return firestoreRepository.subscribeDoctorDigests(account,setDoctorDigests,e=>setLoadError(e.message))},[account]);
- useEffect(()=>{const context=(document as Document&{modelContext?:{registerTool:(t:unknown,o:unknown)=>void}}).modelContext;if(!context)return;const controller=new AbortController();try{Promise.resolve(context.registerTool({name:'navigate_clinic_workspace',title:'Open clinic workspace section',description:'Navigate to Calendar, Patients, Reminders, or Clinic settings in the active demo clinic. Does not create records.',inputSchema:{type:'object',properties:{section:{type:'string',enum:['Calendar','Patients','Reminders','Clinic settings']}},required:['section'],additionalProperties:false},annotations:{readOnlyHint:false},execute:({section}:{section:string})=>{if(!nav.some(n=>n.label===section))throw new Error('Unknown workspace section');setPage(section);setPatientDetail(null);setSearch('');return {section};}},{signal:controller.signal})).catch(()=>{})}catch{}return()=>controller.abort()},[]);
-
- if(authChecking)return <div className="loading"><HeartPulse size={38}/><h1>RelapseClinic</h1><Skeleton className="h-12 w-64"/><p>Checking authentication…</p></div>;
-  if(!account)return <><Toaster position="top-center"/><AuthView/>{loadError&&<p role="alert" className="auth-error-banner">{loadError}</p>}</>;
-  if(!db&&loadError)return <div className="loading" role="alert"><p>{loadError}</p><button onClick={()=>authService.signOut()}>Sign out</button></div>;
-  if(!db)return <div className="loading"><HeartPulse size={38}/><h1>RelapseClinic</h1><Skeleton className="h-12 w-64"/><p>Connecting to Firebase database…</p></div>;
-  if(!db.clinics.length)return <><Toaster position="top-center"/><div className="auth-container"><div className="auth-card"><h1>Admin workspace</h1><p>No clinics yet. Create the first clinic account.</p><AdminCreateClinic onCreated={()=>{}}/><button className="secondary" onClick={()=>authService.signOut()}>Sign out</button></div></div></>;
-  const clinic=db.clinics.find(c=>c.id===(account.role==='admin'?selectedClinicId:account.clinicId))||db.clinics[0];
- const patients=db.patients.filter(p=>p.clinicId===clinic.id),appointments=db.appointments.filter(a=>a.clinicId===clinic.id),reminders=db.reminders.filter(r=>r.clinicId===clinic.id);
- const nowLocal=zonedNow(clinic.timezone),nowDate=nowLocal.date,todays=appointments.filter(a=>a.date===nowDate&&a.status!=='cancelled'),due=deliveries.filter(r=>r.clinicId===clinic.id&&(r.status==='failed'||r.status==='unknown'));
- const clinicDeliveries=deliveries.filter(r=>r.clinicId===clinic.id).sort((a,b)=>(b.appointmentDate+b.appointmentTime).localeCompare(a.appointmentDate+a.appointmentTime));
- const patient=(id:string)=>patients.find(p=>p.id===id);const doctorName=(id:string)=>clinic.doctors.find(d=>d.id===id)?.name||'Doctor';
- const filtered=appointments.filter(a=>a.date===date&&(doctor==='all'||a.doctorId===doctor)).sort((a,b)=>a.time.localeCompare(b.time));
- const dayIndex=(new Date(date+'T12:00:00Z').getUTCDay()+6)%7;const week=Array.from({length:7},(_,i)=>addDays(date,i-dayIndex));
- const start=date.slice(0,8)+'01',monthStart=addDays(start,-((new Date(start+'T12:00:00Z').getUTCDay()+6)%7));const monthDays=Array.from({length:42},(_,i)=>addDays(monthStart,i));
-  function commit(next:Database,message?:string){setDb(next);setLoadError('');if(message)toast.success(message)}
- function safe(action:()=>void){try{action()}catch(e){toast.error((e as Error).message)}}
- function navigate(label:string){setPage(label);setPatientDetail(null);setSearch('')}
-  function switchClinic(id:string){if(account?.role!=='admin')return;safe(()=>{setSelectedClinicId(id);setDate(today(db!.clinics.find(c=>c.id===id)!.timezone));setDoctor('all');setPatientDetail(null);setSearch('');setModal(null);setDetail(null);})}
- function saveAppointment(a:Appointment){validateAppointment(db!,a);commit({...db!,appointments:[...db!.appointments.filter(x=>x.id!==a.id),a]},'Appointment saved');setModal(null);setDetail(null);setDate(a.date);firestoreRepository.saveAppointment(a).catch(e=>toast.error(e.message));}
- async function setAppointmentStatus(a:Appointment,status:Appointment['status']){try{const updated={...a,status};if(status==='scheduled')validateAppointment(db!,updated);await firestoreRepository.saveAppointment(updated);setDetail(null);toast.success(`Appointment ${status}`)}catch(e){toast.error((e as Error).message)}}
- function savePatient(p:Patient,keepModalOpen=false){commit({...db!,patients:[...db!.patients.filter(x=>x.id!==p.id),p]},'Patient saved');if(!keepModalOpen)setModal(null);firestoreRepository.savePatient(p).catch(e=>toast.error(e.message));}
-  function saveClinic(c:Clinic){if(!db!.clinics.some(x=>x.id===c.id))throw new Error('Only the admin can create a clinic account.');if(db!.appointments.some(a=>a.clinicId===c.id&&a.status==='scheduled'&&a.date>=today(c.timezone)&&(minutes(a.time)<minutes(c.opens)||minutes(a.time)+a.duration>minutes(c.closes))))throw new Error('Some upcoming appointments fall outside these hours. Reschedule them before changing clinic hours.');commit({...db!,clinics:db!.clinics.map(x=>x.id===c.id?c:x)},'Clinic settings saved');firestoreRepository.saveClinic(c).catch(e=>toast.error(e.message));}
- async function sendTomorrowDigest(){
-  if(sendingDigest)return;
-  setSendingDigest(true);
-  try{
-   const send=httpsCallable<{clinicId:string;requestId:string},{date:string;accepted:number;failed:number;unknown:number;already_sent:number}>(getFunctions(app,'asia-south1'),'sendDoctorDigestNow');
-   const {data}=await send({clinicId:clinic.id,requestId:crypto.randomUUID()});
-   const summary=`${data.accepted} of ${clinic.doctors.length} doctor emails accepted for ${dateLabel(data.date)}`;
-   if(data.failed||data.unknown)toast.error(`${summary}. ${data.failed} failed; ${data.unknown} uncertain. Check digest activity.`);
-   else if(data.already_sent)toast.info(`${summary}. ${data.already_sent} already sent for this request.`);
-   else toast.success(summary);
-  }catch(error){toast.error((error as Error).message||'Could not send doctor digests.');}
-  finally{setSendingDigest(false);}
- }
- function appointmentRow(a:Appointment,i:number){return <button className="appointment-row" key={a.id} onClick={()=>setDetail(a)} aria-label={`Open appointment for ${patient(a.patientId)?.name}, ${clockLabel(a.time)}`}><div className="time">{clockLabel(a.time).split(' ')[0]}<small>{clockLabel(a.time).split(' ')[1]}</small></div><span className={'avatar color-'+i%4}>{initials(patient(a.patientId)?.name||'?')}</span><div className="patient-summary"><strong>{patient(a.patientId)?.name}</strong><small>{a.reason} · {a.duration} min</small><small className="mobile-doctor">{doctorName(a.doctorId)}</small></div><div className="doctor-summary">{doctorName(a.doctorId)}<small>{clinic.doctors.find(d=>d.id===a.doctorId)?.specialty}</small></div><span className={'status '+a.status}>{statusLabel(a.status)}</span><ChevronRight size={16}/></button>}
- function empty(title:string,description:string){return <Empty><CalendarDays size={28} className="text-primary"/><EmptyTitle>{title}</EmptyTitle><EmptyDescription>{description}</EmptyDescription></Empty>}
- const activePatient=patientDetail?patient(patientDetail):null;
- const matchingPatients=searchPatients(patients,search);
- return <SidebarProvider><Toaster position="top-center"/><Sidebar collapsible="none" className="clinic-sidebar"><div className="brand"><span className="brand-icon"><HeartPulse/></span>RelapseClinic<span className="brand-dot">.</span></div><div className="clinic-picker"><Building2 size={20}/><div>{account.role==='admin'?<Pick label="Active clinic" value={clinic.id} onChange={switchClinic} items={db.clinics.map(c=>({value:c.id,label:c.name}))}/>:<strong>{clinic.name}</strong>}<small>{clinic.address}</small></div></div><p className="nav-caption">WORKSPACE</p><SidebarContent><nav className="desktop-nav" aria-label="Main navigation">{nav.map(({icon:Icon,label})=><button key={label} className={page===label?'active':''} onClick={()=>navigate(label)} aria-current={page===label?'page':undefined}><Icon size={20}/>{label}{label==='Reminders'&&due.length>0&&<span className="nav-count">{due.length}</span>}</button>)}</nav>{account.role==='admin'&&<button className="enroll-link" onClick={()=>setModal({kind:'clinic'})}><Plus size={16}/>Create clinic account</button>}</SidebarContent><div className="sidebar-foot" style={{justifyContent:'space-between'}}><div style={{display:'flex',alignItems:'center',gap:'10px',minWidth:0,overflow:'hidden'}}><span className="avatar">{initials(account.user.email||clinic.name)}</span><div style={{minWidth:0,overflow:'hidden'}}><strong style={{display:'block',textOverflow:'ellipsis',overflow:'hidden',whiteSpace:'nowrap',fontSize:'0.8125rem'}}>{account.user.email?.split('@')[0]||'Care Team'}</strong><small style={{display:'block',textOverflow:'ellipsis',overflow:'hidden',whiteSpace:'nowrap',fontSize:'0.75rem'}}>{account.user.email||clinic.name}</small></div></div><button className="icon-button" style={{width:32,height:32,flexShrink:0}} title="Sign out" aria-label="Sign out" onClick={()=>authService.signOut()}><LogOut size={15}/></button></div></Sidebar><main className="workspace"><header className="topbar"><span className="desktop-breadcrumb">Workspace <span className="muted">/</span> {page}</span><div className="mobile-clinic">{account.role==='admin'?<Pick label="Active clinic" value={clinic.id} onChange={switchClinic} items={db.clinics.map(c=>({value:c.id,label:c.name}))}/>:<strong>{clinic.name}</strong>}</div><div style={{display:'flex',alignItems:'center',gap:'10px'}}><button className="secondary" style={{minHeight:'32px',padding:'4px 10px',fontSize:'0.75rem',gap:'6px'}} onClick={()=>authService.signOut()} title="Sign out"><LogOut size={13}/> Sign out</button></div></header><div className="page-content">{loadError&&<div role="alert" className="storage-error">{loadError}</div>}<div className="heading"><div><p className="eyebrow">{page==='Calendar'?'TODAY AT A GLANCE':clinic.name.toUpperCase()}</p><h1>{page==='Calendar'?'Today’s appointments':page==='Patients'?'Patients':page==='Reminders'?'Appointment messages':'Clinic settings'}</h1><p className="muted">{page==='Calendar'?'Review visits, book appointments, and check message issues.':page==='Patients'?'Find patients, check consent, and review visit history.':page==='Reminders'?'Review confirmation and follow-up attempts.':'Manage clinic details, hours, doctors, and email digests.'}</p></div>{page!=='Clinic settings'&&page!=='Reminders'&&<button className="primary" onClick={()=>setModal({kind:page==='Calendar'?'appointment':'patient'})}><Plus size={18}/>{page==='Calendar'?'New appointment':'Add patient'}</button>}</div>
-   {page==='Calendar'&&<><div className="day-summary" aria-label="Today’s summary"><span><strong>{todays.length}</strong> appointments today</span><span><strong>{todays.filter(a=>a.status==='scheduled').length}</strong> still to see</span>{due.length>0&&<button onClick={()=>navigate('Reminders')}><strong>{due.length}</strong> message issues <ArrowUpRight size={15}/></button>}</div><div className="calendar-layout"><section className="panel calendar-panel"><div className="panel-heading"><div><h2>Appointment calendar</h2><p className="muted">{clinic.timezone.replaceAll('_',' ')}</p></div><div className="desktop-views"><Tabs value={view} onValueChange={setView}><TabsList aria-label="Calendar view">{['Agenda','Week','Month'].map(v=><TabsTrigger key={v} value={v}>{v}</TabsTrigger>)}</TabsList></Tabs></div></div><div className="calendar-toolbar"><button className="icon-button" aria-label="Previous period" onClick={()=>{if(view==='Month'){const d=new Date(date+'T12:00:00Z');d.setUTCDate(1);d.setUTCMonth(d.getUTCMonth()-1);setDate(d.toISOString().slice(0,10))}else setDate(addDays(date,view==='Agenda'?-1:-7))}}><ChevronLeft size={18}/></button><strong>{dateLabel(date,view==='Month'?{month:'long',year:'numeric'}:{day:'numeric',month:'long',year:'numeric'})}</strong><button className="icon-button" aria-label="Next period" onClick={()=>{if(view==='Month'){const d=new Date(date+'T12:00:00Z');d.setUTCDate(1);d.setUTCMonth(d.getUTCMonth()+1);setDate(d.toISOString().slice(0,10))}else setDate(addDays(date,view==='Agenda'?1:7))}}><ChevronRight size={18}/></button><button className="secondary today-button" onClick={()=>setDate(nowDate)}>Today</button><div className="doctor-filter"><Pick label="Filter by doctor" value={doctor} onChange={setDoctor} items={[{value:'all',label:'All doctors'},...clinic.doctors.map(d=>({value:d.id,label:d.name}))]}/></div></div><div className={view==='Agenda'?'date-strip':'date-strip mobile-strip'}>{week.map(d=><button key={d} aria-label={dateLabel(d)} aria-pressed={d===date} className={d===date?'selected':''} onClick={()=>setDate(d)}><small>{dateLabel(d,{weekday:'short'}).toUpperCase()}</small><strong>{Number(d.slice(-2))}</strong><span className="date-dot" style={{visibility:appointments.some(a=>a.date===d&&a.status!=='cancelled')?'visible':'hidden'}}/></button>)}</div>{view!=='Agenda'&&<div className={'desktop-grid '+(view==='Month'?'month-grid':'week-grid')}>{(view==='Month'?monthDays:week).map(d=>{const dayApps=appointments.filter(a=>a.date===d&&(doctor==='all'||a.doctorId===doctor)).sort((a,b)=>a.time.localeCompare(b.time));return <div key={d} className={'calendar-cell '+(d===date?'current-cell ':'')+(d.slice(0,7)!==date.slice(0,7)?'outside-month':'')}><button className="cell-day" onClick={()=>setDate(d)}><small>{dateLabel(d,{weekday:'short'})}</small>{Number(d.slice(-2))}</button>{dayApps.slice(0,view==='Month'?2:20).map(a=><button key={a.id} className={'mini-event '+a.status} onClick={()=>setDetail(a)}>{clockLabel(a.time)}<strong>{patient(a.patientId)?.name}</strong></button>)}{view==='Month'&&dayApps.length>2&&<button className="more-events" onClick={()=>{setDate(d);setView('Agenda')}}>+{dayApps.length-2} more</button>}</div>})}</div>}<div className="agenda-label">{dateLabel(date,{weekday:'long',day:'numeric',month:'short'}).toUpperCase()}<span>{filtered.length} appointment{filtered.length===1?'':'s'}</span></div>{filtered.length?filtered.map(appointmentRow):empty('No appointments','No appointments for this day and doctor. Book a visit using New appointment.')}</section></div></>}
-   {page==='Patients'&&(activePatient?<section className="panel patient-detail"><button className="text-button" onClick={()=>setPatientDetail(null)}><ArrowLeft size={16}/>All patients</button><div className="patient-hero"><span className="avatar">{initials(activePatient.name)}</span><div><h2>{activePatient.name}</h2><p className="muted">{activePatient.phone} · {patientLanguageLabel(activePatient.language)}</p></div><button className="secondary" onClick={()=>setModal({kind:'patient',item:activePatient})}><Pencil size={16}/>Edit patient</button></div><p className="consent-line">{activePatient.consent?<Check size={16}/>:<X size={16}/>}WhatsApp consent {activePatient.consent?'recorded':'not recorded'}</p><div className="form-actions"><button className="primary" onClick={()=>setModal({kind:'appointment',patientId:activePatient.id})}><Plus size={16}/>Book appointment</button></div><h2 className="history-heading">Appointments</h2>{appointments.filter(a=>a.patientId===activePatient.id).sort((a,b)=>(b.date+b.time).localeCompare(a.date+a.time)).map(a=><div key={a.id}><p className="history-date">{dateLabel(a.date)}</p>{appointmentRow(a,0)}</div>)}{!appointments.some(a=>a.patientId===activePatient.id)&&empty('No appointments yet','Book this patient’s first visit.')}<h2 className="history-heading">Earlier manual reminder drafts</h2>{reminders.filter(r=>r.patientId===activePatient.id).map(r=><div className="history-reminder" key={r.id}><span>{dateLabel(r.date)} · {clockLabel(r.time)}</span><span className={'status '+reminderStatus(r,clinic)}>{statusLabel(reminderStatus(r,clinic))}</span><p>{r.sentMessage||reminderMessage(clinic,r)}</p></div>)}{!reminders.some(r=>r.patientId===activePatient.id)&&<p className="muted">No earlier manual reminders.</p>}</section>:<section className="panel"><div className="panel-heading"><div><h2>Patient directory</h2><p className="muted">{patients.length} patients at {clinic.name}</p></div></div><div className="patient-search-toolbar"><label htmlFor="patient-search">Find a patient</label><div className="search-field"><Search size={17}/><Input id="patient-search" type="search" autoComplete="off" placeholder="Search by name or phone number" value={search} onChange={e=>setSearch(e.target.value)}/></div><p className="muted" aria-live="polite">{search.trim()?`${matchingPatients.length} of ${patients.length} patients`: `${patients.length} patients`}</p></div>{matchingPatients.map((p,i)=><button className="patient-row" key={p.id} onClick={()=>setPatientDetail(p.id)}><span className={'avatar color-'+i%4}>{initials(p.name)}</span><div className="patient-summary"><strong>{p.name}</strong><small>{p.phone} · {patientLanguageLabel(p.language)}</small></div><span className={'status '+(p.consent?'completed':'cancelled')}>{p.consent?'WhatsApp consent':'No consent'}</span><ChevronRight size={16}/></button>)}{!matchingPatients.length&&empty(search.trim()?'No matching patients':'Your patient directory starts here',search.trim()?'Try another name or phone number.':'Add a patient to book their first appointment.')}</section>)}
-   {page==='Reminders'&&<section className="panel">
-    <div className="panel-heading"><div><h2>Appointment messages</h2><p className="muted">Confirmation when booked, then 2 days before and at 8 AM on the day. Mark a visit Missed to send the first follow-up immediately. A second is due at 8 AM seven days after the appointment.</p></div></div>
-    <p className="muted">Times use {clinic.timezone}. Messages go only to patients with WhatsApp consent. Marking a visit Missed sends its first follow-up immediately, even if it was days ago; the seven-day follow-up is based on the original appointment date. “Accepted” means MSG91 accepted the request; it does not confirm delivery.</p>
-    <div className="reminder-list">{clinicDeliveries.map(r=><article className="reminder-card" key={r.id}>
-      <div className="reminder-top"><span className="avatar">{initials(patient(r.patientId)?.name||'?')}</span><div className="patient-summary"><strong>{patient(r.patientId)?.name||'Patient removed'}</strong><small>{r.slot==='booked'?'Booking confirmation':r.slot==='two_days_before'?'2 days before':r.slot==='appointment_day'?'Appointment day':r.slot==='missed_day_one'?'Missed visit · first follow-up':'Missed visit · day 7'}</small></div><span className={'status '+r.status}>{r.status}</span></div>
-      <p className="reminder-time"><Clock3 size={14}/>{dateLabel(r.appointmentDate)} · {clockLabel(r.appointmentTime)}</p>
-      {r.patientLanguage&&<p className="muted">{patientLanguageLabel(r.patientLanguage)}</p>}
-      {r.error&&<p className="form-error">{r.error}</p>}
-    </article>)}{!clinicDeliveries.length&&empty('No messages yet','Message attempts will appear here after an eligible appointment is booked or a reminder becomes due.')}</div>
-   </section>}
-   {page==='Clinic settings'&&<div className="settings-layout"><section className="panel settings-panel"><div className="section-heading"><h2>Clinic details</h2><span className="tag">Active clinic</span></div><ClinicForm key={clinic.id} clinic={clinic} onSave={saveClinic}/></section><aside className="settings-aside"><section className="panel settings-panel"><h2>Doctor digest activity</h2><p className="muted">Next-day list · {clinic.doctorDigestTime||'18:00'} · {clinic.timezone}</p><button className="primary" style={{width:'100%',justifyContent:'center',margin:'14px 0'}} onClick={sendTomorrowDigest} disabled={sendingDigest||!clinic.doctors.length||clinic.doctors.some(d=>!/^\S+@\S+\.\S+$/.test(d.email||''))}>{sendingDigest?'Sending…':"Send tomorrow’s digest now"}</button><p className="muted">Sends a fresh snapshot to every doctor, even if a scheduled digest was already sent. {clinic.doctors.some(d=>!/^\S+@\S+\.\S+$/.test(d.email||''))?'Add a valid email for every doctor to enable sending.':''}</p>{doctorDigests.filter(r=>r.clinicId===clinic.id).sort((a,b)=>(b.createdAt?.toDate?.()?.getTime()||0)-(a.createdAt?.toDate?.()?.getTime()||0)).slice(0,10).map(r=><div className="history-reminder" key={r.id}><strong>{doctorName(r.doctorId)}{r.mode==='manual'?' · Sent manually':''}</strong><span>{dateLabel(r.date)} · {r.count} appointment{r.count===1?'':'s'}</span><span className={'status '+r.status}>{r.status}</span>{r.error&&<p className="form-error">{r.error}</p>}</div>)}{!doctorDigests.some(r=>r.clinicId===clinic.id)&&<p className="muted">No doctor digests sent yet.</p>}<p className="muted">Accepted means the email provider accepted the request; inbox delivery is not confirmed.</p></section><section className="panel settings-panel"><h2>Account & Session</h2><p className="muted" style={{wordBreak:'break-all'}}>Signed in as <strong>{account.user.email}</strong></p><button className="secondary" style={{width:'100%',justifyContent:'center',marginTop:'14px'}} onClick={()=>authService.signOut()}><LogOut size={15}/>Sign out</button></section>{account.role==='admin'&&<section className="follow-card"><Building2 size={26}/><h2>Clinic accounts</h2><p>Create a separate account for each clinic. You can view every clinic from the selector.</p><button onClick={()=>setModal({kind:'clinic'})}>Create clinic account <Plus size={17}/></button></section>}</aside></div>}
-  </div></main><nav className="mobile-nav" aria-label="Mobile navigation">{nav.map(({icon:Icon,label})=><button key={label} className={page===label?'active':''} onClick={()=>navigate(label)} aria-current={page===label?'page':undefined}><Icon size={21}/>{label==='Clinic settings'?'Clinic':label}</button>)}</nav>
-  <Dialog open={!!modal} onOpenChange={open=>!open&&setModal(null)}><DialogContent className="clinic-dialog"><DialogTitle>{modal?.kind==='appointment'?(modal.item?'Edit appointment':'New appointment'):modal?.kind==='patient'?(modal.item?'Edit patient':'Add patient'):'Create clinic account'}</DialogTitle><DialogDescription>{clinic.name}</DialogDescription>{modal?.kind==='appointment'&&<AppointmentForm db={db} clinic={clinic} date={date} appointment={modal.item} patientId={modal.patientId} onSave={saveAppointment} onCreatePatient={p=>savePatient(p,true)}/>} {modal?.kind==='patient'&&<PatientForm clinicId={clinic.id} patient={modal.item} onSave={p=>savePatient(p)}/>} {modal?.kind==='clinic'&&account.role==='admin'&&<AdminCreateClinic onCreated={()=>setModal(null)}/>}</DialogContent></Dialog>
-  <Sheet open={!!detail} onOpenChange={open=>!open&&setDetail(null)}><SheetContent className="detail-sheet"><SheetHeader><SheetTitle>Appointment details</SheetTitle><SheetDescription>{clinic.name} · {clinic.timezone}</SheetDescription></SheetHeader>{detail&&<div className="detail-body"><span className="avatar large-avatar">{initials(patient(detail.patientId)?.name||'?')}</span><h2>{patient(detail.patientId)?.name}</h2><p className="muted">{patient(detail.patientId)?.phone}</p><span className={'status '+detail.status}>{statusLabel(detail.status)}</span><dl><dt>Date</dt><dd>{dateLabel(detail.date,{weekday:'long',day:'numeric',month:'long',year:'numeric'})}</dd><dt>Time</dt><dd>{clockLabel(detail.time)} · {detail.duration} minutes</dd><dt>Doctor</dt><dd>{doctorName(detail.doctorId)}</dd><dt>Visit</dt><dd>{detail.reason}</dd></dl><AppointmentTimeline appointment={appointments.find(a=>a.id===detail.id)||detail} deliveries={clinicDeliveries} consent={!!patient(detail.patientId)?.consent}/>{detail.status==='scheduled'&&<><button className="primary" onClick={()=>setAppointmentStatus(detail,'completed')}><Check size={16}/>Mark completed</button>{(nowDate>detail.date||(nowDate===detail.date&&minutes(nowLocal.time)>=minutes(detail.time)+detail.duration))&&<button className="secondary" onClick={()=>setAppointmentStatus(detail,'missed')}>Mark missed</button>}<button className="secondary" onClick={()=>{setModal({kind:'appointment',item:detail});setDetail(null)}}><Pencil size={16}/>Edit / reschedule</button><button className="text-button danger" onClick={()=>setConfirm({title:'Cancel this appointment?',description:'The appointment will remain in the patient’s history. The doctor’s time slot will become available.',action:()=>setAppointmentStatus(detail,'cancelled')})}>Cancel appointment</button></>}{detail.status==='missed'&&<><button className="secondary" onClick={()=>setAppointmentStatus(detail,'completed')}>Correct to completed</button><button className="secondary" onClick={()=>{setModal({kind:'appointment',item:{...detail,status:'scheduled'}});setDetail(null)}}>Reschedule visit</button></>}<button className="text-button" onClick={()=>{setPage('Patients');setPatientDetail(detail.patientId);setDetail(null)}}>View patient history <ArrowUpRight size={16}/></button></div>}</SheetContent></Sheet>
-  <AlertDialog open={!!confirm} onOpenChange={open=>!open&&setConfirm(null)}><AlertDialogContent><AlertDialogTitle>{confirm?.title}</AlertDialogTitle><AlertDialogDescription>{confirm?.description}</AlertDialogDescription><AlertDialogFooter><AlertDialogCancel>Keep unchanged</AlertDialogCancel><AlertDialogAction onClick={()=>{confirm?.action();setConfirm(null)}}>Confirm</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
- </SidebarProvider>
+function Splash({ text }: { text: string }) {
+  return <div className="splash"><Logo /><div className="splash-bar"><i /></div><p>{text}</p></div>;
 }
 
+export default function ClinicApp() {
+  const demo = useSyncExternalStore(noSubscribe, isDemoMode, () => false);
+  const repo = useMemo<Repository>(() => demo ? createDemoRepository() : firestoreRepository, [demo]);
+  const [signedIn, setAccount] = useState<Account | null>(null);
+  const [authPending, setAuthChecking] = useState(true);
+  const account = demo ? demoAccount : signedIn;
+  const authChecking = !demo && authPending;
+  const [db, setDb] = useState<Database | null>(null);
+  const [deliveries, setDeliveries] = useState<MessageDelivery[]>([]);
+  const [digests, setDigests] = useState<DoctorDigestDelivery[]>([]);
+  const [prescriptions, setPrescriptions] = useState<Prescription[]>([]);
+  const [loadError, setLoadError] = useState('');
+  const [selectedClinicId, setSelectedClinicId] = useState(() => { try { return localStorage.getItem('activeClinic') || ''; } catch { return ''; } });
+  const [hashPage, hashId] = useHash().slice(1).split('/');
+  const page = (pages.some(p => p.id === hashPage) ? hashPage : 'today') as Page;
+  const patientId = hashId || null;
+  const [scheduleDate, setScheduleDate] = useState('');
+  const [doctorFilter, setDoctorFilter] = useState('all');
+  const [booking, setBooking] = useState<BookOptions | null>(null);
+  const [patientModal, setPatientModal] = useState<{ item?: Patient } | null>(null);
+  const [clinicModal, setClinicModal] = useState(false);
+  const [detail, setDetail] = useState<Appointment | null>(null);
+  const [rxDraft, setRxDraft] = useState<Prescription | null>(null);
+  const [confirmBox, setConfirmBox] = useState<{ title: string; body: string; action: () => void; danger?: boolean; cta?: string } | null>(null);
+  const [palette, setPalette] = useState(false);
+  const [, setTick] = useState(0);
+
+  useEffect(() => {
+    if (demo) return;
+    return authService.subscribeAuthState(async user => {
+      if (!user) { setAccount(null); setDb(null); setAuthChecking(false); return; }
+      try { setAccount(await getAccount(user)); setLoadError(''); }
+      catch (error) { setLoadError((error as Error).message); setAccount(null); }
+      finally { setAuthChecking(false); }
+    });
+  }, [demo]);
+
+  useEffect(() => {
+    if (!account) return;
+    const onError = (e: Error) => setLoadError(e.message);
+    const unsubs = [
+      repo.subscribeDatabase(account, next => { setDb(next); setLoadError(''); }, onError),
+      repo.subscribeDeliveries(account, setDeliveries, onError),
+      repo.subscribeDoctorDigests(account, setDigests, onError),
+      // Prescriptions are optional: if the rules are not deployed yet, the rest of the app still works.
+      repo.subscribePrescriptions(account, setPrescriptions, e => console.warn('Prescriptions unavailable:', e.message)),
+    ];
+    const timer = setInterval(() => setTick(t => t + 1), 30000);
+    return () => { unsubs.forEach(u => u()); clearInterval(timer); };
+  }, [account, repo]);
+
+  const clinic = db ? db.clinics.find(c => c.id === (account?.role === 'admin' ? selectedClinicId : account?.clinicId)) || db.clinics[0] : undefined;
+  const now = clinic ? zonedNow(clinic.timezone) : { date: '', time: '' };
+
+  const scoped = useMemo(() => {
+    if (!db || !clinic) return null;
+    const patients = db.patients.filter(p => p.clinicId === clinic.id);
+    const byId = new Map(patients.map(p => [p.id, p]));
+    const doctors = new Map(clinic.doctors.map(d => [d.id, d]));
+    return {
+      patients, byId, doctors,
+      appointments: db.appointments.filter(a => a.clinicId === clinic.id),
+      deliveries: deliveries.filter(d => d.clinicId === clinic.id),
+      digests: digests.filter(d => d.clinicId === clinic.id),
+      prescriptions: prescriptions.filter(r => r.clinicId === clinic.id),
+    };
+  }, [db, clinic, deliveries, digests, prescriptions]);
+
+  const go = (p: Page, pid?: string) => { setHash(p, pid); setDetail(null); };
+
+  // Single-key shortcuts for the front desk; ignored while typing or when a dialog is open.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setPalette(true); return; }
+      const t = e.target as HTMLElement;
+      if (e.ctrlKey || e.metaKey || e.altKey || t.closest('input,textarea,select,[contenteditable]') || document.querySelector('dialog[open]')) return;
+      const k = e.key.toLowerCase();
+      if (k === '/') { e.preventDefault(); setPalette(true); }
+      else if (k === 'n') { e.preventDefault(); setBooking({}); }
+      else if (k === 'p') { e.preventDefault(); setPatientModal({}); }
+      else if (k === 'r') { e.preventDefault(); if (clinic) setRxDraft(blankPrescription(clinic, now.date)); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [clinic, now.date]);
+
+  useEffect(() => {
+    const context = (document as Document & { modelContext?: { registerTool: (t: unknown, o: unknown) => void } }).modelContext;
+    if (!context) return;
+    const controller = new AbortController();
+    try {
+      Promise.resolve(context.registerTool({ name: 'navigate_clinic_workspace', title: 'Open clinic workspace section', description: 'Navigate to a section of the clinic workspace. Does not create records.',
+        inputSchema: { type: 'object', properties: { section: { type: 'string', enum: pages.map(p => p.id) } }, required: ['section'], additionalProperties: false }, annotations: { readOnlyHint: false },
+        execute: ({ section }: { section: Page }) => { if (!pages.some(p => p.id === section)) throw new Error('Unknown workspace section'); setHash(section); return { section }; } }, { signal: controller.signal })).catch(() => {});
+    } catch { /* not supported */ }
+    return () => controller.abort();
+  }, []);
+
+  if (authChecking) return <Splash text="Signing you in…" />;
+  if (!account) return <><Toaster position="top-center" richColors /><AuthView error={loadError} /></>;
+  if (!db && loadError) return <div className="splash" role="alert"><Logo /><p>{loadError}</p><button className="btn btn-outline" onClick={() => authService.signOut()}>Sign out</button></div>;
+  if (!db) return <Splash text="Loading your clinic…" />;
+  if (!clinic || !scoped) return <><Toaster position="top-center" richColors /><div className="first-run"><Logo /><h1>Create the first clinic</h1><p className="muted">No clinics yet. Set up a clinic and its login.</p><Suspense fallback={null}><AdminCreateClinic onCreated={() => {}} /></Suspense><button className="btn btn-ghost" onClick={() => authService.signOut()}>Sign out</button></div></>;
+
+  async function setStatus(a: Appointment, status: Appointment['status']) {
+    try {
+      const updated = { ...a, status };
+      if (status === 'scheduled') validateAppointment(db!, updated);
+      await repo.saveAppointment(updated);
+      toast.success(status === 'completed' ? `${scoped!.byId.get(a.patientId)?.name || 'Visit'} marked seen` : status === 'missed' ? 'Marked missed — follow-up will be sent if consented' : `Appointment ${status}`);
+    } catch (e) { toast.error((e as Error).message); }
+  }
+  function saveAppointment(a: Appointment) {
+    validateAppointment(db!, a);
+    repo.saveAppointment(a).catch(e => toast.error(e.message));
+    toast.success(`Booked ${scoped!.byId.get(a.patientId)?.name || ''} · ${clockLabel(a.time)}`);
+    setBooking(null); setDetail(null);
+  }
+  function savePatient(p: Patient) { repo.savePatient(p).then(() => toast.success('Patient saved')).catch(e => toast.error(e.message)); }
+
+  const w: Workspace = {
+    account, db, clinic, repo, now, doctorFilter, setDoctorFilter,
+    patients: scoped.patients, appointments: scoped.appointments, deliveries: scoped.deliveries, digests: scoped.digests, prescriptions: scoped.prescriptions,
+    patient: id => scoped.byId.get(id), doctor: id => scoped.doctors.get(id), doctorName: id => scoped.doctors.get(id)?.name || 'Doctor',
+    go, book: o => { setDetail(null); setBooking(o || {}); }, openAppointment: setDetail,
+    editPatient: p => setPatientModal({ item: p }), savePatient,
+    writeRx: (o: RxOptions = {}) => { setDetail(null); setRxDraft(o.item || (o.repeat ? repeatPrescription(o.repeat, now.date, o.doctorId, o.appointmentId) : blankPrescription(clinic, now.date, o.patientId, o.doctorId || (doctorFilter !== 'all' ? doctorFilter : ''), o.appointmentId))); },
+    setStatus, confirm: setConfirmBox,
+    confirmMissed: a => setConfirmBox({ title: 'Mark as missed?', body: `${scoped.byId.get(a.patientId)?.name || 'The patient'} will get a WhatsApp follow-up now if they consented to messages.`, cta: 'Mark missed', action: () => { void setStatus(a, 'missed'); setDetail(null); } }),
+  };
+
+  const issues = scoped.deliveries.filter(d => d.status === 'failed' || d.status === 'unknown').length;
+  const pending = unresolvedVisits(scoped.appointments, now.date).length;
+  const badge: Partial<Record<Page, number>> = { today: pending, messages: issues };
+  const switchClinic = (id: string) => { setSelectedClinicId(id); try { localStorage.setItem('activeClinic', id); } catch { /* ignore */ } setDoctorFilter('all'); setScheduleDate(''); go('today'); };
+  const clinicPicker = account.role === 'admin' && db.clinics.length > 1
+    ? <Select label="Active clinic" className="clinic-select" value={clinic.id} onChange={switchClinic} options={db.clinics.map(c => ({ value: c.id, label: c.name }))} />
+    : <strong className="clinic-name">{clinic.name}</strong>;
+  const loading = <div className="page"><div className="skeleton h-title" /><div className="skeleton h-card" /></div>;
+
+  return <><Toaster position="bottom-center" richColors closeButton /><div className="app">
+    <aside className="side">
+      <div className="side-top"><Logo /></div>
+      <div className="side-clinic">{clinicPicker}<small>{clinic.address}</small></div>
+      <nav className="side-nav" aria-label="Main">{pages.map(p => <a key={p.id} href={'#' + p.id} className={page === p.id ? 'on' : ''} aria-current={page === p.id ? 'page' : undefined}>{p.icon}<span>{p.label}</span>{!!badge[p.id] && <em className="badge">{badge[p.id]}</em>}</a>)}</nav>
+      <div className="side-help"><p><Kbd>N</Kbd> appointment</p><p><Kbd>R</Kbd> prescription</p><p><Kbd>P</Kbd> patient</p><p><Kbd>/</Kbd> search</p></div>
+      <div className="side-user"><span className="avatar t1 avatar-sm">{initials(account.user.email || 'U')}</span><span className="side-email">{account.user.email}</span><button className="btn-icon" title="Sign out" aria-label="Sign out" onClick={() => demo ? location.assign(location.origin + location.pathname) : authService.signOut()}><LogOut size={16} /></button></div>
+    </aside>
+
+    <div className="main">
+      <header className="top">
+        <div className="top-mobile-logo"><Logo compact />{clinicPicker}</div>
+        <button className="top-search" onClick={() => setPalette(true)}><Search size={16} /><span>Search patients, actions…</span><Kbd>Ctrl K</Kbd></button>
+        <div className="top-right">
+          <span className="top-clock" title={clinic.timezone}>{clockLabel(now.time)}</span>
+          <button className="btn btn-outline btn-top" onClick={() => w.writeRx()}><FileText size={16} /><span>Prescription</span></button>
+          <button className="btn btn-primary btn-top" onClick={() => w.book()}><CalendarPlus size={16} /><span>Appointment</span></button>
+          <a className="btn-icon top-settings" href="#settings" aria-label="Settings"><Settings size={18} /></a>
+        </div>
+      </header>
+      {demo && <div className="demo-banner">Demo mode — sample data in this browser only. Nothing is saved or sent.</div>}
+      {loadError && <div className="note note-error top-error" role="alert">{loadError}</div>}
+      <main className="content">
+        <Suspense fallback={loading}>
+          {page === 'today' && <TodayView w={w} />}
+          {page === 'schedule' && <ScheduleView w={w} date={scheduleDate || now.date} setDate={setScheduleDate} />}
+          {page === 'patients' && <PatientsView w={w} selectedId={patientId && scoped.byId.has(patientId) ? patientId : null} select={id => go('patients', id || undefined)} />}
+          {page === 'rx' && <RecordsViews.Prescriptions w={w} />}
+          {page === 'messages' && <RecordsViews.Messages w={w} />}
+          {page === 'impact' && <ImpactView w={w} />}
+          {page === 'settings' && <SettingsView w={w} demo={demo} onCreateClinic={() => setClinicModal(true)} />}
+        </Suspense>
+      </main>
+    </div>
+
+    <nav className="tabbar" aria-label="Main">{pages.slice(0, 5).map(p => <a key={p.id} href={'#' + p.id} className={page === p.id ? 'on' : ''}>{p.icon}<span>{p.id === 'rx' ? 'Rx' : p.label}</span>{!!badge[p.id] && <em className="badge">{badge[p.id]}</em>}</a>)}</nav>
+
+    <Modal open={!!booking} onClose={() => setBooking(null)} title={booking?.item?.status === 'scheduled' && scoped.appointments.some(a => a.id === booking.item!.id) ? 'Reschedule appointment' : 'New appointment'} subtitle={clinic.name}>
+      {booking && <AppointmentForm db={db} clinic={clinic} date={booking.date || booking.item?.date || now.date} appointment={booking.item} patientId={booking.patientId} doctorId={booking.doctorId || (doctorFilter !== 'all' ? doctorFilter : undefined)} time={booking.time} onSave={saveAppointment} onCreatePatient={savePatient} />}
+    </Modal>
+    <Modal open={!!patientModal} onClose={() => setPatientModal(null)} title={patientModal?.item ? 'Edit patient' : 'Add patient'}>
+      {patientModal && <PatientForm clinicId={clinic.id} patient={patientModal.item} onSave={p => { savePatient(p); setPatientModal(null); if (!patientModal.item) go('patients', p.id); }} />}
+    </Modal>
+    <Modal open={!!detail} onClose={() => setDetail(null)} title="Appointment" variant="drawer">
+      {detail && <AppointmentDrawer w={w} appointment={detail} onClose={() => setDetail(null)} />}
+    </Modal>
+    <Modal open={clinicModal} onClose={() => setClinicModal(false)} title="Create clinic account" wide>
+      {clinicModal && <Suspense fallback={null}><AdminCreateClinic onCreated={() => setClinicModal(false)} /></Suspense>}
+    </Modal>
+    <Modal open={!!confirmBox} onClose={() => setConfirmBox(null)} title={confirmBox?.title}>
+      {confirmBox && <div className="confirm"><p>{confirmBox.body}</p><div className="form-foot"><button className="btn btn-ghost" onClick={() => setConfirmBox(null)}>Keep as is</button><button data-autofocus className={'btn ' + (confirmBox.danger ? 'btn-danger' : 'btn-primary')} onClick={() => { confirmBox.action(); setConfirmBox(null); }}>{confirmBox.cta || 'Confirm'}</button></div></div>}
+    </Modal>
+    <RxDialog open={!!rxDraft}>{rxDraft && <Suspense fallback={<div className="rxb-loading">Opening prescription…</div>}><PrescriptionBuilder key={rxDraft.id} w={w} initial={rxDraft} onClose={() => setRxDraft(null)} /></Suspense>}</RxDialog>
+    {palette && <Suspense fallback={null}><CommandPalette w={w} open={palette} onClose={() => setPalette(false)} pages={pages} /></Suspense>}
+  </div></>;
+}
+
+/** Full-screen native dialog for the prescription builder (it handles its own close/confirm). */
+function RxDialog({ open, children }: { open: boolean; children: React.ReactNode }) {
+  const [el, setEl] = useState<HTMLDialogElement | null>(null);
+  useEffect(() => { if (!el) return; if (open && !el.open) el.showModal(); if (!open && el.open) el.close(); }, [open, el]);
+  return <dialog ref={setEl} className="dlg dlg-full" onCancel={e => e.preventDefault()}>{children}</dialog>;
+}

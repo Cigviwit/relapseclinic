@@ -5,6 +5,7 @@ service cloud.firestore {
     // clinics/{id}: core details, doctors (with optional email addresses), optional doctor digest settings.
     // patients/{id}: id, clinicId, name, phone (strings), consent (bool), optional language (en/mr/hi).
     // appointments/{id}: id, clinicId, patientId, doctorId, date, time, reason, status (strings), duration (int).
+    // prescriptions/{id}: id, clinicId, patientId, doctorId, date, medicines (list), createdAt; optional vitals, notes, follow-up, sentAt.
     // reminders/{id}: id, clinicId, patientId, date, time, message, status (strings), optional sentAt/sentMessage.
     function signedIn() { return request.auth != null; }
     function isAdmin() { return signedIn() && request.auth.uid == 'zfXlb9MEMQSQDBNYOk5RJFDJcZo1'; }
@@ -54,6 +55,18 @@ service cloud.firestore {
         && data.uid == uid && text(data.email, 254) && text(data.clinicId, 100)
         && text(data.createdAt, 40);
     }
+    function validPrescription(data, id) {
+      return data.keys().hasAll(['id','clinicId','patientId','doctorId','date','medicines','createdAt'])
+        && data.keys().hasOnly(['id','clinicId','patientId','doctorId','appointmentId','date','age','sex','vitals','complaints','diagnosis','medicines','advice','tests','followUp','createdAt','sentAt'])
+        && data.id == id && text(data.clinicId, 100) && text(data.patientId, 100)
+        && text(data.doctorId, 100) && text(data.date, 10) && text(data.createdAt, 40)
+        && data.medicines is list && data.medicines.size() <= 40
+        && (!('vitals' in data) || data.vitals is map)
+        && (!('complaints' in data) || (data.complaints is string && data.complaints.size() <= 2000))
+        && (!('diagnosis' in data) || (data.diagnosis is string && data.diagnosis.size() <= 1000))
+        && (!('advice' in data) || (data.advice is string && data.advice.size() <= 3000))
+        && (!('tests' in data) || (data.tests is string && data.tests.size() <= 1000));
+    }
     function sameClinic() { return request.resource.data.clinicId == resource.data.clinicId; }
 
     match /users/{uid} {
@@ -86,6 +99,12 @@ service cloud.firestore {
       allow get, list: if canAccess(resource.data.clinicId);
       allow create: if canAccess(request.resource.data.clinicId) && validReminder(request.resource.data, id);
       allow update: if canAccess(resource.data.clinicId) && sameClinic() && validReminder(request.resource.data, id);
+      allow delete: if false;
+    }
+    match /prescriptions/{id} {
+      allow get, list: if canAccess(resource.data.clinicId);
+      allow create: if canAccess(request.resource.data.clinicId) && validPrescription(request.resource.data, id);
+      allow update: if canAccess(resource.data.clinicId) && sameClinic() && validPrescription(request.resource.data, id);
       allow delete: if false;
     }
     match /messageDeliveries/{id} {

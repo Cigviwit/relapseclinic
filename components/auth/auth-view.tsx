@@ -1,13 +1,11 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { HeartPulse, Lock, Mail, ShieldCheck } from "lucide-react";
-import { toast } from "sonner";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Input } from "@/components/ui/input";
+import { CalendarCheck2, FileText, MessageCircle, ShieldCheck } from "lucide-react";
 import { authService } from "@/lib/auth-service";
+import { Logo } from "@/components/logo";
 
-export default function AuthView() {
+export default function AuthView({ error: outerError }: { error?: string }) {
   const [mode, setMode] = useState<"clinic" | "admin">("clinic");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -21,7 +19,6 @@ export default function AuthView() {
     setError("");
     try {
       await authService.signIn({ email, password, rememberMe, role: mode });
-      toast.success("Signed in successfully.");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not sign in.");
     } finally {
@@ -29,19 +26,35 @@ export default function AuthView() {
     }
   }
 
-  return <div className="auth-container"><div className="auth-card">
-    <div className="auth-brand"><span className="auth-brand-icon"><HeartPulse size={26}/></span><h1>RelapseClinic<span className="brand-dot">.</span></h1></div>
-    <p className="auth-subtitle">Connected clinic scheduling & WhatsApp follow-up workspace</p>
-    <div className="auth-tabs" role="tablist" aria-label="Account type">
-      <button type="button" role="tab" aria-selected={mode === "clinic"} className={mode === "clinic" ? "auth-tab active" : "auth-tab"} onClick={() => { setMode("clinic"); setError(""); }}>Clinic login</button>
-      <button type="button" role="tab" aria-selected={mode === "admin"} className={mode === "admin" ? "auth-tab active" : "auth-tab"} onClick={() => { setMode("admin"); setError(""); }}><ShieldCheck size={16}/>Admin login</button>
-    </div>
-    {error && <div className="auth-error-banner" role="alert">{error}</div>}
-    <form className="auth-form" onSubmit={submit}>
-      <div className="auth-field"><label htmlFor="login-email"><Mail size={15}/> Email address</label><Input id="login-email" type="email" required autoComplete="username" value={email} onChange={e => setEmail(e.target.value)}/></div>
-      <div className="auth-field"><label htmlFor="login-password"><Lock size={15}/> Password</label><Input id="login-password" type="password" required autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)}/></div>
-      <div className="auth-checkbox-row"><label className="auth-remember-label"><Checkbox checked={rememberMe} onCheckedChange={checked => setRememberMe(checked === true)}/><span>Remember me on this browser</span></label></div>
-      <button type="submit" className="primary auth-submit-btn" disabled={loading}>{loading ? "Signing in…" : mode === "admin" ? "Sign in as admin" : "Sign in to clinic"}</button>
-    </form>
-  </div></div>;
+  const shownError = error || outerError;
+  return <div className="auth">
+    <section className="auth-side" aria-hidden>
+      <Logo light />
+      <div className="auth-pitch">
+        <h2>The front desk, without the chaos.</h2>
+        <ul>
+          <li><CalendarCheck2 size={18} />Book in seconds with live free slots</li>
+          <li><FileText size={18} />Write a prescription and send it on WhatsApp</li>
+          <li><MessageCircle size={18} />Automatic reminders and missed-visit follow-ups</li>
+        </ul>
+      </div>
+      <small>Your clinic’s data stays private to your clinic account.</small>
+    </section>
+    <main className="auth-main">
+      <form className="auth-card" onSubmit={submit}>
+        <div className="auth-mobile-logo"><Logo /></div>
+        <h1>Sign in</h1>
+        <p className="muted">{mode === "admin" ? "Administrator access to every clinic." : "Use the login your clinic was given."}</p>
+        <div className="seg" role="tablist" aria-label="Account type">
+          <button type="button" role="tab" aria-selected={mode === "clinic"} className={mode === "clinic" ? "on" : ""} onClick={() => { setMode("clinic"); setError(""); }}>Clinic</button>
+          <button type="button" role="tab" aria-selected={mode === "admin"} className={mode === "admin" ? "on" : ""} onClick={() => { setMode("admin"); setError(""); }}><ShieldCheck size={15} />Admin</button>
+        </div>
+        {shownError && <div className="note note-error" role="alert">{shownError}</div>}
+        <label className="field"><span className="field-label">Email</span><input className="input input-lg" id="login-email" type="email" required autoFocus autoComplete="username" value={email} onChange={e => setEmail(e.target.value)} /></label>
+        <label className="field"><span className="field-label">Password</span><input className="input input-lg" id="login-password" type="password" required autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} /></label>
+        <label className="check"><input type="checkbox" checked={rememberMe} onChange={e => setRememberMe(e.target.checked)} /><span>Keep me signed in on this computer</span></label>
+        <button type="submit" className="btn btn-primary btn-lg btn-block" disabled={loading}>{loading ? "Signing in…" : "Sign in"}</button>
+      </form>
+    </main>
+  </div>;
 }

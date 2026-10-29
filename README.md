@@ -18,10 +18,28 @@ The development preview uses port 5173. On Windows installations with a broken n
 
 ## Structure
 
-- `app/clinic-app.tsx`: clinic-scoped workspace, calendar, patient histories, reminders, and admin clinic switching.
-- `components/clinic-forms.tsx`: accessible forms with shared validation.
-- `lib/clinic.ts`: typed records, messaging interface, validation, and timezone helpers.
-- `tests/clinic.test.mjs`: booking collisions, working hours, clinic isolation, consent, simulation, date rollover, phone validation, and persistence tests.
+- `app/clinic-app.tsx`: app shell — auth, live Firestore subscriptions, navigation (URL hash), keyboard shortcuts, dialogs. Less-used screens are lazy-loaded.
+- `components/workspace/`: Today (front-desk queue), Schedule (doctor day grid + week), Patients, Prescriptions, Messages, Impact, Settings, appointment drawer and the Ctrl+K command palette.
+- `components/prescription/prescription-builder.tsx`: prescription builder with live pad / WhatsApp preview, print and send.
+- `components/clinic-forms.tsx`, `components/patient-picker.tsx`, `components/kit.tsx`: forms, type-to-search patient picker with inline “new patient”, and the small native-element UI kit (`<dialog>`, `<select>`).
+- `lib/clinic.ts`: typed records, validation, and timezone helpers. `lib/schedule.ts`: free-slot and day-queue logic. `lib/prescription.ts`: prescription model, dosage text (English/Hindi/Marathi) and WhatsApp formatting.
+- `tests/clinic.test.mjs`: booking collisions, working hours, clinic isolation, consent, timezones, phone validation, persistence, free slots and prescription formatting.
+
+## Front desk workflow
+
+**Today** is the home screen: today’s queue with a “now” line, one-click Seen / Missed / Rx on every row, past visits still needing an outcome, who is up next and tomorrow’s list. Shortcuts: `N` new appointment, `R` prescription, `P` add patient, `/` or `Ctrl+K` search. Booking shows the doctor’s free slots for the chosen length; a new patient can be added inline from the search box.
+
+Try the UI without signing in at `http://localhost:5173/?demo` (localhost only; sample data in memory, nothing is saved or sent).
+
+## Prescriptions
+
+Write a prescription from Today’s queue, an appointment, a patient’s page or with `R`: vitals, complaints, diagnosis, medicines (dose chips like 1-0-1, food timing, days), advice, tests and follow-up. **Send on WhatsApp** saves it and opens WhatsApp (app or web) on that computer with the formatted prescription addressed to the patient — press send there. For Hindi or Marathi patients, each dosage line is repeated in their language. **Print** prints an A5 pad (or save as PDF). Shortcuts in the builder: `Ctrl+S` save, `Ctrl+Enter` send, `Ctrl+P` print.
+
+Prescriptions are stored in the `prescriptions` Firestore collection. Deploy the updated rules before using it in production: `npx firebase-tools deploy --only firestore:rules --project relapse-clinic-db`.
+
+## Impact dashboard
+
+The **Impact** page proves the value of the follow-ups: messages sent (accepted by MSG91), missed visits followed up, missed visits rebooked, and estimated recovered visits (a follow-up was sent and the patient has a later booked or completed visit). Enter an average visit fee to estimate recovered revenue. Logic lives in `lib/impact.ts`.
 
 ## Accounts and access
 
