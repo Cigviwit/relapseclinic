@@ -44,3 +44,31 @@ The browser never receives the auth key.
 ## Patient message languages
 
 For English-first Marathi and Hindi messages, follow [BILINGUAL_TEMPLATES.md](BILINGUAL_TEMPLATES.md). It includes all four additional template bodies, sample placeholder values and the `bilingualTemplates` secret configuration. English-only patients continue to use the two existing templates.
+
+## Prescription template (PDF)
+
+Prescriptions are sent from the clinic's WhatsApp number as a PDF attachment. WhatsApp only lets a business start a conversation with an approved template, and template variables cannot contain line breaks, so the prescription itself travels as the PDF and the template carries a short note.
+
+Create a **Utility** template in MSG91 → WhatsApp → Templates:
+
+- Name: `clinic_prescription_v1`
+- Language: English
+- Header: **Document** (upload any sample PDF for review)
+- Body:
+
+```text
+Hello {{1}}, your prescription from {{2}} at {{3}} dated {{4}} is attached. For any questions, please call {{5}}.
+```
+
+Variables: patient name, doctor name, clinic name, prescription date, clinic phone. Sample values for review: `Aarav Sharma`, `Dr. Priya Nair`, `Greenleaf Dental Care`, `29 October 2026`, `+918000000001`.
+
+After Meta approves it, add `"prescriptionTemplate": "clinic_prescription_v1"` to the `MSG91_CONFIG` secret (keep every existing field, including `authKey`) and redeploy the functions:
+
+```sh
+npx firebase-tools functions:secrets:set MSG91_CONFIG --project relapse-clinic-db
+npx firebase-tools deploy --only functions,firestore:rules --project relapse-clinic-db
+```
+
+The first command prompts for the whole JSON value without echoing it. Optional: `"prescriptionLanguage"` if the template is approved under a code other than `en`.
+
+How it works: the browser renders the prescription pad (the same one that prints) to a PDF and calls `sendPrescription`. The function checks clinic access and WhatsApp consent, records a `prescription` row in `messageDeliveries` (shown on the Messages page), stores the PDF in `prescriptionFiles` (no client access), and asks MSG91 to send the template with a document link served by `prescriptionFile`. That link carries a random 48-character token and stops working after 30 days. Until the template is configured, staff can still use **My WhatsApp** in the builder, which opens WhatsApp on that computer with the prescription as text.

@@ -1,75 +1,115 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { Copy, GripVertical, Plus, Printer, Save, Send, Trash2, X } from 'lucide-react';
-import { dateLabel, type Patient } from '@/lib/clinic';
-import { adviceChips, blankMedicine, cleanPrescription, commonMedicines, dayPresets, followUpPresets, frequencies, medicineInstruction, prescriptionMessage, timings, validatePrescription, vitalsLine, whatsappUrl, type Medicine, type Prescription } from '@/lib/prescription';
+import { Download, ExternalLink, GripVertical, Plus, Printer, Save, Send, Trash2, X } from 'lucide-react';
+import { dateLabel } from '@/lib/clinic';
+import { blankMedicine, cleanPrescription, dayPresets, followUpPresets, frequencies, medicineInstruction, prescriptionMessage, timings, validatePrescription, whatsappUrl, type Medicine, type Prescription } from '@/lib/prescription';
+import { padFor, specialties, type Specialty } from '@/lib/rx-templates';
+import { elementToPdf, toBase64 } from '@/lib/pdf';
 import { patientLanguage } from '@/lib/patient-language';
 import { Field, Kbd, Select } from '../kit';
 import { PatientPicker } from '../patient-picker';
+import { Pad } from './pad';
+import { ToothChart } from './tooth-chart';
 import type { Workspace } from '../workspace/types';
+
+type TextField = 'history' | 'complaints' | 'findings' | 'diagnosis' | 'procedures' | 'plan' | 'advice';
 
 export default function PrescriptionBuilder({ w, initial, onClose }: { w: Workspace; initial: Prescription; onClose: () => void }) {
   const [rx, setRx] = useState(initial);
   const [error, setError] = useState('');
   const [preview, setPreview] = useState<'pad' | 'whatsapp'>('pad');
   const [dirty, setDirty] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState('');
   const isSaved = w.prescriptions.some(p => p.id === rx.id);
   const nameRefs = useRef(new Map<string, HTMLInputElement>());
+  const exportRef = useRef<HTMLDivElement>(null);
   const focusMed = useRef<string | null>(null);
   const patient = w.patient(rx.patientId);
   const doctor = w.doctor(rx.doctorId);
+  const pad = { ...padFor(w.clinic.rxPad), specialty: rx.specialty };
+  const preset = specialties[rx.specialty];
+  const has = (s: (typeof preset.sections)[number]) => preset.sections.includes(s);
   const set = (v: Partial<Prescription>) => { setRx(x => ({ ...x, ...v })); setDirty(true); setError(''); };
   const setMed = (id: string, v: Partial<Medicine>) => set({ medicines: rx.medicines.map(m => m.id === id ? { ...m, ...v } : m) });
   const addMed = (after?: string) => { const m = blankMedicine(); focusMed.current = m.id; const i = after ? rx.medicines.findIndex(x => x.id === after) + 1 : rx.medicines.length; set({ medicines: [...rx.medicines.slice(0, i), m, ...rx.medicines.slice(i)] }); };
   useEffect(() => { if (focusMed.current) { nameRefs.current.get(focusMed.current)?.focus(); focusMed.current = null; } });
   // Start typing straight away: the first medicine when the patient is known, otherwise the patient search.
   useEffect(() => {
-    const t = setTimeout(() => (initial.patientId ? nameRefs.current.get(initial.medicines[0]?.id) : document.querySelector<HTMLElement>('.rxb .combo input'))?.focus());
+    const t = setTimeout(() => (initial.patientId ? document.querySelector<HTMLElement>('.rxb-form [data-first]') : document.querySelector<HTMLElement>('.rxb .combo input'))?.focus());
     return () => clearTimeout(t);
   }, [initial]);
 
-  // Doctor's own recent medicines first, then the common list.
+  // This clinic's own recent medicines first, then the specialty's common list.
   const medicineOptions = useMemo(() => {
     const recent = w.prescriptions.slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt)).flatMap(p => p.medicines.map(m => m.name));
-    return Array.from(new Set([...recent, ...commonMedicines]));
-  }, [w.prescriptions]);
+    return Array.from(new Set([...recent, ...preset.medicines]));
+  }, [w.prescriptions, preset]);
   const lastForPatient = useMemo(() => w.prescriptions.filter(p => p.patientId === rx.patientId && p.id !== rx.id).sort((a, b) => (b.date + b.createdAt).localeCompare(a.date + a.createdAt))[0], [w.prescriptions, rx.patientId, rx.id]);
-  const message = useMemo(() => prescriptionMessage(rx, w.clinic, patient, doctor), [rx, w.clinic, patient, doctor]);
   const lang = patientLanguage(patient?.language);
+
+  /** Chips add or remove one entry in a text field; separator is ", " for short lists, newline for steps. */
+  const entries = (field: TextField, sep: string) => rx[field].split(sep === '\n' ? '\n' : /,\s*/).map(s => s.trim()).filter(Boolean);
+  const toggle = (field: TextField, value: string, sep = '\n') => { const list = entries(field, sep); set({ [field]: (list.includes(value) ? list.filter(v => v !== value) : [...list, value]).join(sep) }); };
+  const chips = (field: TextField, options: string[], sep = '\n') => options.length > 0 && <div className="chips chips-xs">{options.map(o => <button type="button" key={o} className={'chip' + (entries(field, sep).includes(o) ? ' on' : '')} onClick={() => toggle(field, o, sep)}>{o}</button>)}</div>;
 
   function finalize(sent: boolean) {
     validatePrescription(rx, w.patients, w.clinic.doctors);
     const now = new Date().toISOString();
     return cleanPrescription({ ...rx, createdAt: rx.createdAt || now, sentAt: sent ? now : rx.sentAt });
   }
-  async function persist(clean: Prescription, okMessage: string) {
-    setBusy(true);
-    try { await w.repo.savePrescription(clean); setRx(clean); setDirty(false); toast.success(okMessage); }
-    catch (e) { toast.error(`Could not save: ${(e as Error).message}`); }
-    finally { setBusy(false); }
+  async function persist(clean: Prescription) { await w.repo.savePrescription(clean); setRx(clean); setDirty(false); }
+  async function run(label: string, task: () => Promise<void>) {
+    if (busy) return;
+    setBusy(label);
+    try { await task(); } catch (e) { setError((e as Error).message); toast.error((e as Error).message); } finally { setBusy(''); }
   }
-  function save() { try { void persist(finalize(false), 'Prescription saved'); } catch (e) { setError((e as Error).message); } }
+  const pdf = () => elementToPdf(exportRef.current!.firstElementChild as HTMLElement, pad.paper);
+  const fileName = () => `Prescription ${patient?.name || ''} ${rx.date}.pdf`.replace(/[^\w .-]+/g, '').replace(/\s+/g, '-');
+
+  function save() { try { const clean = finalize(false); void run('Saving…', async () => { await persist(clean); toast.success('Prescription saved'); }); } catch (e) { setError((e as Error).message); } }
   function send() {
+    let clean: Prescription;
+    try {
+      clean = finalize(false);
+      if (!patient) throw new Error('Choose the patient first.');
+      if (!patient.consent) throw new Error(`${patient.name} has not agreed to WhatsApp messages. Record consent in their profile, or use “My WhatsApp”.`);
+    } catch (e) { setError((e as Error).message); return; }
+    void run('Preparing PDF…', async () => {
+      await persist(clean);
+      const file = await pdf();
+      setBusy('Sending…');
+      const result = await w.repo.sendPrescription(clean.id, toBase64(file), fileName());
+      if (result.status !== 'accepted') throw new Error(result.error || 'WhatsApp could not confirm the message. Check Messages before sending again.');
+      setRx(x => ({ ...x, sentAt: new Date().toISOString() }));
+      toast.success(`Prescription sent to ${patient!.name} on WhatsApp`);
+    });
+  }
+  function sendFromMyWhatsapp() {
     try {
       const clean = finalize(true);
       if (!patient) throw new Error('Choose the patient first.');
       // Open WhatsApp synchronously inside the click so pop-up blockers allow it.
       window.open(whatsappUrl(patient.phone, prescriptionMessage(clean, w.clinic, patient, doctor)), '_blank', 'noopener');
-      void persist(clean, `Opened WhatsApp for ${patient.name}`);
+      void run('Saving…', () => persist(clean));
     } catch (e) { setError((e as Error).message); }
   }
-  async function copy() { try { await navigator.clipboard.writeText(message); toast.success('Prescription copied'); } catch { toast.error('Copy is blocked in this browser.'); } }
+  function download() {
+    void run('Preparing PDF…', async () => {
+      const url = URL.createObjectURL(new Blob([await pdf() as BlobPart], { type: 'application/pdf' }));
+      const a = Object.assign(document.createElement('a'), { href: url, download: fileName() });
+      a.click(); setTimeout(() => URL.revokeObjectURL(url), 5000);
+    });
+  }
   function print() {
-    const pad = document.getElementById('rx-pad'); if (!pad) return;
+    const node = exportRef.current?.firstElementChild; if (!node) return;
     const frame = document.createElement('iframe');
     frame.style.cssText = 'position:fixed;width:0;height:0;border:0;right:0;bottom:0';
     document.body.appendChild(frame);
+    const styles = [...document.querySelectorAll('style, link[rel="stylesheet"]')].map(s => s.outerHTML).join('');
     const doc = frame.contentDocument!;
-    doc.open(); doc.write(`<!doctype html><html><head><meta charset="utf-8"><title>Prescription – ${patient?.name || ''}</title><style>${PRINT_CSS}</style></head><body>${pad.outerHTML}</body></html>`); doc.close();
-    frame.contentWindow!.focus(); frame.contentWindow!.print();
-    setTimeout(() => frame.remove(), 1000);
+    doc.open(); doc.write(`<!doctype html><html><head><meta charset="utf-8"><title>${fileName()}</title>${styles}<style>@page{size:${pad.paper};margin:0}html,body{background:#fff;margin:0}.pad{box-shadow:none;border-radius:0;width:100%;min-height:100vh}</style></head><body>${node.outerHTML}</body></html>`); doc.close();
+    setTimeout(() => { frame.contentWindow!.focus(); frame.contentWindow!.print(); setTimeout(() => frame.remove(), 1000); }, 300);
   }
   function close() { if (dirty && !window.confirm('Discard unsaved changes to this prescription?')) return; onClose(); }
 
@@ -83,16 +123,18 @@ export default function PrescriptionBuilder({ w, initial, onClose }: { w: Worksp
     return () => window.removeEventListener('keydown', onKey);
   });
 
-  const toggleAdvice = (line: string) => { const lines = rx.advice.split('\n').map(l => l.trim()).filter(Boolean); set({ advice: (lines.includes(line) ? lines.filter(l => l !== line) : [...lines, line]).join('\n') }); };
+  const text = (field: TextField, label: string, placeholder: string, options: string[] = [], sep = '\n', rows = 2) =>
+    <Field label={label}>{chips(field, options, sep)}<textarea className="input" rows={rows} data-first={field === 'complaints' || undefined} value={rx[field]} maxLength={field === 'advice' ? 3000 : 2000} onChange={e => set({ [field]: e.target.value })} placeholder={placeholder} /></Field>;
 
   return <div className="rxb">
     <header className="rxb-head">
-      <div className="rxb-title"><h2>{isSaved ? 'Prescription' : 'New prescription'}</h2><small>{patient ? `${patient.name} · ${dateLabel(rx.date, { day: 'numeric', month: 'short', year: 'numeric' })}` : 'Choose a patient to begin'}{dirty && isSaved ? ' · unsaved changes' : ''}</small></div>
+      <div className="rxb-title"><h2>{isSaved ? 'Prescription' : 'New prescription'}</h2><small>{patient ? `${patient.name} · ${dateLabel(rx.date, { day: 'numeric', month: 'short', year: 'numeric' })}` : 'Choose a patient to begin'}{rx.sentAt ? ' · sent' : dirty && isSaved ? ' · unsaved changes' : ''}</small></div>
       <div className="rxb-actions">
-        <button className="btn btn-ghost" onClick={copy} title="Copy text"><Copy size={16} /><span>Copy</span></button>
-        <button className="btn btn-ghost" onClick={print} title="Print or save as PDF (Ctrl+P)"><Printer size={16} /><span>Print</span></button>
-        <button className="btn btn-outline" onClick={save} disabled={busy} title="Save (Ctrl+S)"><Save size={16} /><span>Save</span></button>
-        <button className="btn btn-wa" onClick={send} disabled={busy || !patient} title="Send on WhatsApp (Ctrl+Enter)"><Send size={16} /><span>{rx.sentAt ? 'Send again' : 'Send on WhatsApp'}</span></button>
+        <button className="btn btn-ghost" onClick={print} title="Print (Ctrl+P)"><Printer size={16} /><span>Print</span></button>
+        <button className="btn btn-ghost" onClick={download} disabled={!!busy} title="Download PDF"><Download size={16} /><span>PDF</span></button>
+        <button className="btn btn-ghost" onClick={sendFromMyWhatsapp} disabled={!!busy || !patient} title="Open WhatsApp on this computer with the prescription as text"><ExternalLink size={16} /><span>My WhatsApp</span></button>
+        <button className="btn btn-outline" onClick={save} disabled={!!busy} title="Save (Ctrl+S)"><Save size={16} /><span>Save</span></button>
+        <button className="btn btn-wa" onClick={send} disabled={!!busy || !patient} title="Send the PDF from the clinic’s WhatsApp number (Ctrl+Enter)"><Send size={16} /><span>{busy || (rx.sentAt ? 'Send again' : 'Send on WhatsApp')}</span></button>
         <button className="btn-icon" aria-label="Close" onClick={close}><X size={20} /></button>
       </div>
     </header>
@@ -102,32 +144,41 @@ export default function PrescriptionBuilder({ w, initial, onClose }: { w: Worksp
         <section className="rxb-sec">
           <div className="grid-rx-top">
             <Field label="Patient"><PatientPicker patients={w.patients} value={rx.patientId} onChange={patientId => set({ patientId })} onCreate={w.savePatient} clinicId={w.clinic.id} autoFocus={!rx.patientId} /></Field>
-            <Field label="Doctor"><Select label="Doctor" value={rx.doctorId} onChange={doctorId => set({ doctorId })} options={w.clinic.doctors.map(d => ({ value: d.id, label: d.name }))} /></Field>
+            <Field label="Doctor"><Select label="Doctor" value={rx.doctorId} onChange={doctorId => { const d = w.doctor(doctorId); set({ doctorId, ...(d?.padSpecialty && !isSaved ? { specialty: d.padSpecialty } : {}) }); }} options={w.clinic.doctors.map(d => ({ value: d.id, label: d.name }))} /></Field>
             <Field label="Date"><input className="input" type="date" value={rx.date} onChange={e => set({ date: e.target.value })} /></Field>
+            <Field label="Pad"><Select label="Prescription pad" value={rx.specialty} onChange={v => set({ specialty: v as Specialty })} options={Object.entries(specialties).map(([value, s]) => ({ value, label: s.label }))} /></Field>
           </div>
-          {lastForPatient && !isSaved && rx.medicines.every(m => !m.name) && <div className="note note-info row-between"><span>Last Rx {dateLabel(lastForPatient.date, { day: 'numeric', month: 'short' })}: {lastForPatient.medicines.map(m => m.name).join(', ') || lastForPatient.diagnosis}</span>
-            <button className="btn btn-sm btn-soft" onClick={() => set({ diagnosis: lastForPatient.diagnosis, complaints: lastForPatient.complaints, advice: lastForPatient.advice, tests: lastForPatient.tests, medicines: lastForPatient.medicines.map(m => ({ ...m, id: crypto.randomUUID() })) })}>Repeat it</button></div>}
+          {lastForPatient && !isSaved && rx.medicines.every(m => !m.name) && <div className="note note-info row-between"><span>Last visit {dateLabel(lastForPatient.date, { day: 'numeric', month: 'short' })}: {lastForPatient.diagnosis || lastForPatient.medicines.map(m => m.name).join(', ')}{lastForPatient.teeth?.length ? ` · teeth ${lastForPatient.teeth.join(', ')}` : ''}</span>
+            <button className="btn btn-sm btn-soft" onClick={() => set({ history: lastForPatient.history, diagnosis: lastForPatient.diagnosis, plan: lastForPatient.plan, teeth: lastForPatient.teeth || [], medicines: lastForPatient.medicines.map(m => ({ ...m, id: crypto.randomUUID() })), advice: lastForPatient.advice })}>Copy forward</button></div>}
           <div className="grid-vitals">
             <Field label="Age"><input className="input" inputMode="numeric" maxLength={3} value={rx.age} onChange={e => set({ age: e.target.value.replace(/\D/g, '') })} placeholder="yrs" /></Field>
             <Field label="Sex"><Select label="Sex" value={rx.sex} onChange={v => set({ sex: v as Prescription['sex'] })} options={[{ value: '', label: '—' }, { value: 'M', label: 'Male' }, { value: 'F', label: 'Female' }, { value: 'O', label: 'Other' }]} /></Field>
-            <Field label="BP"><input className="input" value={rx.vitals.bp} onChange={e => set({ vitals: { ...rx.vitals, bp: e.target.value } })} placeholder="120/80" maxLength={9} /></Field>
-            <Field label="Pulse"><input className="input" inputMode="numeric" value={rx.vitals.pulse} onChange={e => set({ vitals: { ...rx.vitals, pulse: e.target.value } })} placeholder="/min" maxLength={3} /></Field>
-            <Field label="Temp °F"><input className="input" inputMode="decimal" value={rx.vitals.temp} onChange={e => set({ vitals: { ...rx.vitals, temp: e.target.value } })} placeholder="98.6" maxLength={5} /></Field>
-            <Field label="Weight kg"><input className="input" inputMode="decimal" value={rx.vitals.weight} onChange={e => set({ vitals: { ...rx.vitals, weight: e.target.value } })} maxLength={5} /></Field>
-            <Field label="SpO₂ %"><input className="input" inputMode="numeric" value={rx.vitals.spo2} onChange={e => set({ vitals: { ...rx.vitals, spo2: e.target.value } })} maxLength={3} /></Field>
+            {has('vitals') && preset.vitals.includes('bp') && <Field label="BP"><input className="input" value={rx.vitals.bp} onChange={e => set({ vitals: { ...rx.vitals, bp: e.target.value } })} placeholder="120/80" maxLength={9} /></Field>}
+            {has('vitals') && preset.vitals.includes('pulse') && <Field label="Pulse"><input className="input" inputMode="numeric" value={rx.vitals.pulse} onChange={e => set({ vitals: { ...rx.vitals, pulse: e.target.value } })} placeholder="/min" maxLength={3} /></Field>}
+            {has('vitals') && preset.vitals.includes('temp') && <Field label="Temp °F"><input className="input" inputMode="decimal" value={rx.vitals.temp} onChange={e => set({ vitals: { ...rx.vitals, temp: e.target.value } })} placeholder="98.6" maxLength={5} /></Field>}
+            {has('vitals') && preset.vitals.includes('weight') && <Field label="Weight kg"><input className="input" inputMode="decimal" value={rx.vitals.weight} onChange={e => set({ vitals: { ...rx.vitals, weight: e.target.value } })} maxLength={5} /></Field>}
+            {has('vitals') && preset.vitals.includes('spo2') && <Field label="SpO₂ %"><input className="input" inputMode="numeric" value={rx.vitals.spo2} onChange={e => set({ vitals: { ...rx.vitals, spo2: e.target.value } })} maxLength={3} /></Field>}
           </div>
-          <div className="grid-2">
-            <Field label="Complaints"><textarea className="input" rows={2} value={rx.complaints} maxLength={2000} onChange={e => set({ complaints: e.target.value })} placeholder="e.g. Fever and cough for 3 days" /></Field>
-            <Field label="Diagnosis"><textarea className="input" rows={2} value={rx.diagnosis} maxLength={1000} onChange={e => set({ diagnosis: e.target.value })} placeholder="e.g. Acute upper respiratory infection" /></Field>
-          </div>
+          {has('history') && text('history', preset.labels.history || 'Medical history & allergies', 'e.g. Diabetic, allergic to penicillin', preset.history, ', ', 1)}
+          {has('complaints') && text('complaints', preset.labels.complaints || 'Complaints', rx.specialty === 'dental' ? 'e.g. Pain in lower left back tooth for 3 days' : 'e.g. Fever and cough for 3 days')}
         </section>
+
+        {has('teeth') && <section className="rxb-sec"><h3 className="sec-h">Teeth involved <small className="muted">click to mark · FDI numbering</small></h3><ToothChart value={rx.teeth} onChange={teeth => set({ teeth })} /></section>}
+
+        {(has('findings') || has('diagnosis') || has('procedures') || has('plan')) && <section className="rxb-sec">
+          {has('findings') && text('findings', preset.labels.findings || 'Findings', rx.specialty === 'dental' ? 'e.g. Deep occlusal caries, tender on percussion' : 'Examination findings')}
+          {has('diagnosis') && text('diagnosis', 'Diagnosis', 'Select above or type', preset.diagnoses, ', ')}
+          {has('procedures') && text('procedures', preset.labels.procedures || 'Procedure', 'One per line', preset.procedures)}
+          {has('plan') && text('plan', preset.labels.plan || 'Plan', 'One per line', preset.plans)}
+        </section>}
 
         <section className="rxb-sec">
           <div className="sec-row"><h3 className="rx-symbol">℞ Medicines</h3><small className="muted">Enter in a name adds the next row</small></div>
           <datalist id="rx-medicines">{medicineOptions.map(m => <option key={m} value={m} />)}</datalist>
+          <div className="chips chips-xs med-quick">{preset.medicines.slice(0, 8).map(name => <button type="button" key={name} className="chip" onClick={() => { const empty = rx.medicines.find(m => !m.name.trim()); if (empty) setMed(empty.id, { name }); else set({ medicines: [...rx.medicines, { ...blankMedicine(), name }] }); }}>+ {name.replace(/^(Tab|Cap|Syp) /, '')}</button>)}</div>
           <ol className="meds">{rx.medicines.map((m, i) => <li key={m.id} className="med">
             <div className="med-top"><span className="med-n"><GripVertical size={14} />{i + 1}</span>
-              <input ref={el => { if (el) nameRefs.current.set(m.id, el); else nameRefs.current.delete(m.id); }} className="input med-name" list="rx-medicines" placeholder="Medicine, strength (e.g. Tab Paracetamol 650 mg)" value={m.name} maxLength={120}
+              <input ref={el => { if (el) nameRefs.current.set(m.id, el); else nameRefs.current.delete(m.id); }} className="input med-name" list="rx-medicines" placeholder="Medicine and strength (e.g. Tab Ibuprofen 400 mg)" value={m.name} maxLength={120}
                 onChange={e => setMed(m.id, { name: e.target.value })} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addMed(m.id); } }} aria-label={`Medicine ${i + 1}`} />
               <button className="btn-icon" aria-label={`Remove medicine ${i + 1}`} onClick={() => set({ medicines: rx.medicines.length > 1 ? rx.medicines.filter(x => x.id !== m.id) : [blankMedicine()] })}><Trash2 size={16} /></button></div>
             <div className="med-grid">
@@ -145,54 +196,27 @@ export default function PrescriptionBuilder({ w, initial, onClose }: { w: Worksp
         </section>
 
         <section className="rxb-sec">
-          <Field label="Advice"><div className="chips chips-xs">{adviceChips.map(a => <button type="button" key={a} className={'chip' + (rx.advice.split('\n').map(l => l.trim()).includes(a) ? ' on' : '')} onClick={() => toggleAdvice(a)}>{a}</button>)}</div>
-            <textarea className="input" rows={3} value={rx.advice} maxLength={3000} onChange={e => set({ advice: e.target.value })} placeholder="One instruction per line" /></Field>
+          {text('advice', 'Advice', 'One instruction per line', preset.advice, '\n', 3)}
           <div className="grid-2">
-            <Field label="Tests / investigations"><input className="input" value={rx.tests} maxLength={1000} onChange={e => set({ tests: e.target.value })} placeholder="e.g. CBC, HbA1c" /></Field>
-            <Field label="Follow-up"><div className="row-tight wrap"><input className="input input-sm" type="date" min={rx.date} value={rx.followUp} onChange={e => set({ followUp: e.target.value })} />
+            <Field label="Tests / investigations"><input className="input" value={rx.tests} maxLength={1000} onChange={e => set({ tests: e.target.value })} placeholder={rx.specialty === 'dental' ? 'e.g. IOPA 36, OPG' : 'e.g. CBC, HbA1c'} /></Field>
+            <Field label="Next visit"><div className="row-tight wrap"><input className="input input-sm" type="date" min={rx.date} value={rx.followUp} onChange={e => set({ followUp: e.target.value })} />
               {followUpPresets(rx.date).map(f => <button type="button" key={f.label} className={'chip' + (rx.followUp === f.value ? ' on' : '')} onClick={() => set({ followUp: rx.followUp === f.value ? '' : f.value })}>{f.label}</button>)}</div></Field>
           </div>
-          {rx.followUp && patient && <button className="btn btn-sm btn-ghost" onClick={() => w.book({ patientId: patient.id, doctorId: rx.doctorId, date: rx.followUp })}>Book the follow-up visit now →</button>}
+          {rx.followUp && patient && <button className="btn btn-sm btn-ghost" onClick={() => w.book({ patientId: patient.id, doctorId: rx.doctorId, date: rx.followUp })}>Book the next visit now →</button>}
         </section>
         {error && <p className="form-error" role="alert">{error}</p>}
         <p className="shortcut-hint"><Kbd>Ctrl</Kbd>+<Kbd>S</Kbd> save · <Kbd>Ctrl</Kbd>+<Kbd>Enter</Kbd> send on WhatsApp · <Kbd>Ctrl</Kbd>+<Kbd>P</Kbd> print</p>
       </div>
 
       <aside className="rxb-preview">
-        <div className="seg seg-sm" role="tablist" aria-label="Preview"><button role="tab" aria-selected={preview === 'pad'} className={preview === 'pad' ? 'on' : ''} onClick={() => setPreview('pad')}>Printed pad</button><button role="tab" aria-selected={preview === 'whatsapp'} className={preview === 'whatsapp' ? 'on' : ''} onClick={() => setPreview('whatsapp')}>WhatsApp</button></div>
-        {preview === 'pad' ? <Pad rx={rx} w={w} patient={patient} /> : <div className="wa-preview"><div className="wa-bar">{patient ? <><strong>{patient.name}</strong><small>{patient.phone}</small></> : <small>No patient selected</small>}</div><div className="wa-chat"><div className="wa-bubble">{waFormat(message)}</div></div>
-          <p className="muted small">Opens WhatsApp on this computer with the message filled in — press send there. {patient && !patient.consent && 'This patient has not consented to automatic reminders; sending their own prescription is fine if they asked for it.'}</p></div>}
+        <div className="seg seg-sm" role="tablist" aria-label="Preview"><button role="tab" aria-selected={preview === 'pad'} className={preview === 'pad' ? 'on' : ''} onClick={() => setPreview('pad')}>Pad (PDF)</button><button role="tab" aria-selected={preview === 'whatsapp'} className={preview === 'whatsapp' ? 'on' : ''} onClick={() => setPreview('whatsapp')}>WhatsApp</button></div>
+        {preview === 'pad' ? <Pad rx={rx} clinic={w.clinic} doctor={doctor} patient={patient} pad={pad} /> : <div className="wa-preview"><div className="wa-bar">{patient ? <><strong>{patient.name}</strong><small>{patient.phone}</small></> : <small>No patient selected</small>}</div>
+          <div className="wa-chat"><div className="wa-bubble wa-doc"><div className="wa-file"><span>PDF</span><div><strong>{fileName()}</strong><small>Prescription · {pad.paper}</small></div></div>
+            <div>Hello {patient?.name || '…'}, your prescription from {doctor?.name} at {w.clinic.name} dated {dateLabel(rx.date, { day: 'numeric', month: 'long', year: 'numeric' })} is attached. For any questions, please call {w.clinic.phone}.</div></div></div>
+          <p className="muted small">Sent from the clinic’s WhatsApp number through MSG91, using the approved prescription template with the PDF attached.{patient && !patient.consent && ' This patient has no WhatsApp consent recorded.'}</p></div>}
       </aside>
     </div>
+    {/* Fixed-width copy used for PDF and print, so output is identical on any screen size. */}
+    <div className="pad-export" ref={exportRef} aria-hidden><Pad rx={rx} clinic={w.clinic} doctor={doctor} patient={patient} pad={pad} /></div>
   </div>;
 }
-
-/** Renders WhatsApp *bold* and _italic_ in the preview bubble. */
-function waFormat(text: string) {
-  return text.split('\n').map((line, i) => <div key={i}>{line ? line.split(/(\*[^*]+\*|_[^_]+_)/g).map((part, j) => part.startsWith('*') && part.endsWith('*') && part.length > 2 ? <b key={j}>{part.slice(1, -1)}</b> : part.startsWith('_') && part.endsWith('_') && part.length > 2 ? <i key={j}>{part.slice(1, -1)}</i> : part) : ' '}</div>);
-}
-
-function Pad({ rx, w, patient }: { rx: Prescription; w: Workspace; patient?: Patient }) {
-  const d = w.doctor(rx.doctorId);
-  const meds = rx.medicines.filter(m => m.name.trim());
-  const vitals = vitalsLine(rx.vitals);
-  return <article className="pad" id="rx-pad">
-    <header className="pad-head"><div><h3>{w.clinic.name}</h3><p>{w.clinic.address}</p><p>{w.clinic.phone}</p></div><div className="pad-doc"><strong>{d?.name}</strong><p>{d?.specialty}</p></div></header>
-    <div className="pad-patient"><span><b>Patient:</b> {patient?.name || '—'}{rx.age && `, ${rx.age} y`}{rx.sex && ` / ${rx.sex}`}</span><span><b>Date:</b> {dateLabel(rx.date, { day: 'numeric', month: 'short', year: 'numeric' })}</span></div>
-    {vitals && <p className="pad-line"><b>Vitals:</b> {vitals}</p>}
-    {rx.complaints && <p className="pad-line"><b>Complaints:</b> {rx.complaints}</p>}
-    {rx.diagnosis && <p className="pad-line"><b>Diagnosis:</b> {rx.diagnosis}</p>}
-    <div className="pad-rx">℞</div>
-    {meds.length ? <ol className="pad-meds">{meds.map(m => <li key={m.id}><strong>{m.name}</strong><span>{medicineInstruction(m)}</span>{m.notes && <em>{m.notes}</em>}</li>)}</ol> : <p className="pad-placeholder">Medicines appear here as you type.</p>}
-    {rx.tests && <p className="pad-line"><b>Tests:</b> {rx.tests}</p>}
-    {rx.advice && <div className="pad-line"><b>Advice:</b><ul>{rx.advice.split('\n').filter(l => l.trim()).map((l, i) => <li key={i}>{l}</li>)}</ul></div>}
-    {rx.followUp && <p className="pad-line"><b>Follow-up:</b> {dateLabel(rx.followUp, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p>}
-    <footer className="pad-sign"><span>{d?.name}</span></footer>
-  </article>;
-}
-
-const PRINT_CSS = `@page{size:A5;margin:12mm}body{font:12px/1.5 system-ui,"Segoe UI",Arial,sans-serif;color:#111;margin:0}
-.pad-head{display:flex;justify-content:space-between;gap:16px;border-bottom:2px solid #0b6b60;padding-bottom:8px;margin-bottom:10px}.pad-head h3{margin:0;font-size:17px;color:#0b6b60}.pad-head p{margin:0;color:#444}.pad-doc{text-align:right}.pad-doc p{margin:0;color:#444}
-.pad-patient{display:flex;justify-content:space-between;border-bottom:1px solid #ddd;padding:4px 0 8px;margin-bottom:8px}.pad-line{margin:6px 0}.pad-line ul{margin:2px 0 0 18px;padding:0}
-.pad-rx{font:700 26px Georgia,serif;color:#0b6b60;margin:8px 0 2px}.pad-meds{margin:0 0 10px 18px;padding:0}.pad-meds li{margin:0 0 8px}.pad-meds strong{display:block}.pad-meds span{color:#333}.pad-meds em{display:block;color:#555;font-size:11px}
-.pad-placeholder{color:#999}.pad-sign{margin-top:40px;text-align:right}.pad-sign span{display:inline-block;border-top:1px solid #333;padding-top:4px;min-width:160px;text-align:center}`;

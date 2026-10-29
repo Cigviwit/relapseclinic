@@ -64,3 +64,28 @@ test('free slots skip busy times, clinic hours and the past',()=>{
  const b=dayBuckets([ap('x','09:00',30),ap('y','10:00',30),ap('z','11:00',30),ap('w','08:00',30,'completed')],'10:10');
  assert.deepEqual([b.overdue.map(a=>a.id),b.current.map(a=>a.id),b.upcoming.map(a=>a.id),b.seen.length],[['x'],['y'],['z'],1]);
 });
+import { imagesToPdf } from '../lib/pdf.ts';
+import { withDefaults } from '../lib/prescription.ts';
+import { specialties, padFor, toothName } from '../lib/rx-templates.ts';
+test('PDF writer produces a valid multi-page document with correct offsets',()=>{
+ const jpeg=new Uint8Array([0xff,0xd8,1,2,3,0xff,0xd9]);
+ const bytes=imagesToPdf([{jpeg,width:100,height:141},{jpeg,width:100,height:50}],419.53,595.28);
+ const text=new TextDecoder('latin1').decode(bytes);
+ assert.ok(text.startsWith('%PDF-1.4'));assert.match(text,/\/Count 2/);assert.ok(text.trimEnd().endsWith('%%EOF'));
+ const xref=Number(text.match(/startxref\n(\d+)/)[1]);assert.equal(text.slice(xref,xref+4),'xref');
+ const offsets=[...text.slice(xref).matchAll(/^(\d{10}) 00000 n $/gm)].map(m=>Number(m[1]));
+ offsets.forEach((o,i)=>assert.equal(text.slice(o,o+`${i+1} 0 obj`.length),`${i+1} 0 obj`));
+});
+test('dental prescriptions carry teeth and treatment into the message',()=>{
+ const db=seed(),c={...db.clinics[0],rxPad:{specialty:'dental'}},p=db.patients[0];
+ const rx={...blankPrescription(c,'2026-10-29',p.id,'priya'),teeth:[37,36],diagnosis:'Irreversible pulpitis',procedures:'RCT – access opening',plan:'Crown'};
+ assert.equal(rx.specialty,'dental');
+ const msg=prescriptionMessage(rx,c,p,c.doctors[0]);
+ assert.match(msg,/\*Teeth:\* 36, 37/);assert.match(msg,/\*Treatment done today:\* RCT – access opening/);assert.match(msg,/\*Treatment advised:\* Crown/);
+ assert.doesNotThrow(()=>validatePrescription({...rx,medicines:[]},db.patients,c.doctors));
+ const old=withDefaults({id:'x',clinicId:'greenleaf',medicines:[],vitals:{bp:'120/80'}});
+ assert.deepEqual([old.specialty,old.teeth,old.vitals.bp,old.vitals.pulse],['general',[],'120/80','']);
+ assert.equal(toothName(36),'lower left first molar');assert.equal(toothName(55),'upper right second molar (milk tooth)');
+ assert.equal(padFor({specialty:'dental'},'general').specialty,'general');
+ assert.ok(specialties.dental.sections.includes('teeth'));
+});

@@ -2,16 +2,44 @@ const { initializeApp } = require('firebase-admin/app');
 const { getFirestore, FieldValue } = require('firebase-admin/firestore');
 const { onDocumentWritten } = require('firebase-functions/v2/firestore');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
-const { onCall, HttpsError } = require('firebase-functions/v2/https');
+const { onCall, onRequest, HttpsError } = require('firebase-functions/v2/https');
+const { randomBytes, timingSafeEqual } = require('node:crypto');
 const { defineSecret } = require('firebase-functions/params');
 const { logger } = require('firebase-functions');
-const { addDays, localNow, slotFor, missedDueNow, deliveryId, appointmentMessage, msg91Payload, hasReplacementAppointment, digestDue, doctorDigest, doctorDigestId, manualDoctorDigestId } = require('./reminder-logic');
+const { addDays, localNow, slotFor, missedDueNow, deliveryId, appointmentMessage, msg91Payload, prescriptionValues, prescriptionFileName, prescriptionDeliveryId, hasReplacementAppointment, digestDue, doctorDigest, doctorDigestId, manualDoctorDigestId } = require('./reminder-logic');
 
 initializeApp();
 const db = getFirestore();
 const msg91Config = defineSecret('MSG91_CONFIG');
 const doctorEmailConfig = defineSecret('DOCTOR_EMAIL_CONFIG');
 const region = 'asia-south1';
+const ADMIN_UID = 'zfXlb9MEMQSQDBNYOk5RJFDJcZo1';
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// Firestore documents are capped at 1 MiB; the PDF is stored as bytes in one document.
+const MAX_PDF_BYTES = 950 * 1024;
+const PDF_LINK_DAYS = 30;
+
+async function assertClinicAccess(uid, clinicId, action) {
+  if (!uid) throw new HttpsError('unauthenticated', `Sign in to ${action}.`);
+  if (uid === ADMIN_UID) return;
+  const profile = await db.doc(`users/${uid}`).get();
+  if (!profile.exists || profile.data().clinicId !== clinicId) {
+    throw new HttpsError('permission-denied', `You cannot ${action} for this clinic.`);
+  }
+}
+
+async function postToMsg91(settings, payload) {
+  const response = await fetch('https://api.msg91.com/api/v5/whatsapp/whatsapp-outbound-message/bulk/', {
+    method: 'POST',
+    headers: { authkey: settings.authKey, 'content-type': 'application/json', accept: 'application/json' },
+    body: JSON.stringify(payload), signal: AbortSignal.timeout(20000),
+  });
+  const raw = await response.text();
+  let result;
+  try { result = JSON.parse(raw); } catch { result = { message: raw.slice(0, 300) }; }
+  const rejected = !response.ok || result?.type === 'error' || result?.status === 'error' || result?.success === false;
+  return { response, result, rejected };
+}
 
 function config() {
   const value = JSON.parse(msg91Config.value());
@@ -95,15 +123,8 @@ async function sendAppointment(appointmentId, slot, expectedFingerprint, immedia
       templateLanguage: message.language });
     const payload = msg91Payload({ ...settings, language: message.language }, patient.phone,
       message.templateName, message.values, id);
-    const response = await fetch('https://api.msg91.com/api/v5/whatsapp/whatsapp-outbound-message/bulk/', {
-      method: 'POST',
-      headers: { authkey: settings.authKey, 'content-type': 'application/json', accept: 'application/json' },
-      body: JSON.stringify(payload), signal: AbortSignal.timeout(20000),
-    });
-    const raw = await response.text();
-    let result;
-    try { result = JSON.parse(raw); } catch { result = { message: raw.slice(0, 300) }; }
-    if (!response.ok || result?.type === 'error' || result?.status === 'error' || result?.success === false) {
+    const { response, result, rejected } = await postToMsg91(settings, payload);
+    if (rejected) {
       await ref.update({ status: 'failed', httpStatus: response.status,
         error: String(result?.message || result?.error || 'MSG91 rejected the message').slice(0, 300),
         updatedAt: FieldValue.serverTimestamp() });
@@ -201,12 +222,7 @@ exports.sendDoctorDigestNow = onCall({
       typeof requestId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(requestId)) {
     throw new HttpsError('invalid-argument', 'A valid clinic and request ID are required.');
   }
-  if (uid !== 'zfXlb9MEMQSQDBNYOk5RJFDJcZo1') {
-    const profile = await db.doc(`users/${uid}`).get();
-    if (!profile.exists || profile.data().clinicId !== clinicId) {
-      throw new HttpsError('permission-denied', 'You cannot send digests for this clinic.');
-    }
-  }
+  await assertClinicAccess(uid, clinicId, 'send digests');
   const clinicSnap = await db.doc(`clinics/${clinicId}`).get();
   if (!clinicSnap.exists) throw new HttpsError('not-found', 'Clinic not found.');
   const doctors = clinicSnap.data().doctors;
@@ -291,4 +307,98 @@ exports.sendScheduledReminders = onSchedule({
       }
     }
   }
+});
+
+// Sends a prescription PDF from the clinic's WhatsApp number. The browser renders the
+// pad to a PDF; it is stored here and MSG91 fetches it through prescriptionFile.
+exports.sendPrescription = onCall({
+  region, secrets: [msg91Config], timeoutSeconds: 60, maxInstances: 5, memory: '512MiB',
+}, async (request) => {
+  const { prescriptionId, pdf, fileName, requestId } = request.data || {};
+  if (typeof prescriptionId !== 'string' || !/^[A-Za-z0-9_-]{1,100}$/.test(prescriptionId) ||
+      typeof requestId !== 'string' || !UUID.test(requestId) || typeof pdf !== 'string') {
+    throw new HttpsError('invalid-argument', 'A prescription, its PDF and a request ID are required.');
+  }
+  const bytes = Buffer.from(pdf, 'base64');
+  if (bytes.length > MAX_PDF_BYTES) throw new HttpsError('invalid-argument', 'The prescription PDF is too large to send.');
+  if (bytes.subarray(0, 5).toString('latin1') !== '%PDF-') throw new HttpsError('invalid-argument', 'The attachment is not a PDF.');
+
+  const rxSnap = await db.doc(`prescriptions/${prescriptionId}`).get();
+  if (!rxSnap.exists) throw new HttpsError('not-found', 'Save the prescription before sending it.');
+  const rx = rxSnap.data();
+  await assertClinicAccess(request.auth?.uid, rx.clinicId, 'send prescriptions');
+  const [clinicSnap, patientSnap] = await Promise.all([db.doc(`clinics/${rx.clinicId}`).get(), db.doc(`patients/${rx.patientId}`).get()]);
+  if (!clinicSnap.exists || !patientSnap.exists || patientSnap.data().clinicId !== rx.clinicId) {
+    throw new HttpsError('failed-precondition', 'The patient or clinic for this prescription no longer exists.');
+  }
+  const clinic = clinicSnap.data(), patient = patientSnap.data();
+  if (!patient.consent) throw new HttpsError('failed-precondition', `${patient.name} has not agreed to WhatsApp messages.`);
+  if (!/^\+[1-9]\d{7,14}$/.test(patient.phone)) throw new HttpsError('failed-precondition', 'The patient phone number is not valid.');
+  const settings = config();
+  if (!settings) throw new HttpsError('failed-precondition', 'WhatsApp sending is turned off for this account.');
+  if (typeof settings.prescriptionTemplate !== 'string' || !settings.prescriptionTemplate.trim()) {
+    throw new HttpsError('failed-precondition', 'The WhatsApp prescription template is not set up yet. Use "My WhatsApp" for now.');
+  }
+  let values;
+  try { values = prescriptionValues(rx, patient, clinic); }
+  catch (error) { throw new HttpsError('failed-precondition', error.message); }
+
+  const id = prescriptionDeliveryId(prescriptionId, requestId);
+  const ref = db.doc(`messageDeliveries/${id}`);
+  const token = randomBytes(24).toString('hex');
+  const name = prescriptionFileName(fileName);
+  const claimed = await db.runTransaction(async (tx) => {
+    if ((await tx.get(ref)).exists) return false;
+    tx.create(ref, {
+      clinicId: rx.clinicId, appointmentId: rx.appointmentId || '', patientId: rx.patientId, prescriptionId,
+      slot: 'prescription', appointmentDate: rx.date, appointmentTime: '', status: 'sending',
+      patientLanguage: patient.language || 'en', templateName: settings.prescriptionTemplate,
+      requestedBy: request.auth.uid, createdAt: FieldValue.serverTimestamp(),
+    });
+    tx.create(db.doc(`prescriptionFiles/${id}`), {
+      clinicId: rx.clinicId, prescriptionId, token, fileName: name, pdf: bytes, createdAt: FieldValue.serverTimestamp(),
+    });
+    return true;
+  });
+  if (!claimed) return { status: (await ref.get()).data()?.status || 'unknown', error: 'This send was already requested.' };
+
+  const project = process.env.GCLOUD_PROJECT || JSON.parse(process.env.FIREBASE_CONFIG || '{}').projectId;
+  const link = `https://${region}-${project}.cloudfunctions.net/prescriptionFile?id=${id}&t=${token}`;
+  try {
+    const payload = msg91Payload({ ...settings, language: settings.prescriptionLanguage || 'en' }, patient.phone,
+      settings.prescriptionTemplate, values, id, { type: 'document', value: link, filename: name });
+    const { response, result, rejected } = await postToMsg91(settings, payload);
+    if (rejected) {
+      const error = String(result?.message || result?.error || 'MSG91 rejected the message').slice(0, 300);
+      await ref.update({ status: 'failed', httpStatus: response.status, error, updatedAt: FieldValue.serverTimestamp() });
+      logger.error('MSG91 rejected prescription', { deliveryId: id, httpStatus: response.status });
+      return { status: 'failed', error };
+    }
+    await ref.update({ status: 'accepted', providerMessageId: String(result?.message_id || result?.request_id || ''),
+      updatedAt: FieldValue.serverTimestamp() });
+    await rxSnap.ref.update({ sentAt: new Date().toISOString() });
+    return { status: 'accepted' };
+  } catch (error) {
+    // A timeout may happen after MSG91 accepted the request. Never retry it blindly.
+    await ref.update({ status: 'unknown', error: String(error.message).slice(0, 300), updatedAt: FieldValue.serverTimestamp() });
+    logger.error('MSG91 prescription outcome unknown', { deliveryId: id, error: String(error.message) });
+    return { status: 'unknown', error: 'WhatsApp did not confirm in time. Check Messages before sending again.' };
+  }
+});
+
+// Serves a sent prescription PDF to MSG91/WhatsApp. The link carries a random token
+// and stops working after PDF_LINK_DAYS.
+exports.prescriptionFile = onRequest({ region, maxInstances: 5, invoker: 'public' }, async (req, res) => {
+  const id = String(req.query.id || ''), token = String(req.query.t || '');
+  if (req.method !== 'GET' || !/^rx_[0-9a-f]{32}$/.test(id) || !/^[0-9a-f]{48}$/.test(token)) { res.status(404).send('Not found'); return; }
+  const snap = await db.doc(`prescriptionFiles/${id}`).get();
+  const file = snap.data();
+  const expected = Buffer.from(file?.token || '', 'utf8'), given = Buffer.from(token, 'utf8');
+  const fresh = file?.createdAt && Date.now() - file.createdAt.toMillis() < PDF_LINK_DAYS * 24 * 60 * 60 * 1000;
+  if (!file || expected.length !== given.length || !timingSafeEqual(expected, given) || !fresh) { res.status(404).send('Not found'); return; }
+  res.set('Content-Type', 'application/pdf');
+  res.set('Content-Disposition', `inline; filename="${file.fileName}"`);
+  res.set('Cache-Control', 'private, max-age=3600');
+  res.set('X-Robots-Tag', 'noindex');
+  res.send(Buffer.from(file.pdf));
 });

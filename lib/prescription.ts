@@ -1,13 +1,15 @@
 import { addDays, dateLabel, type Clinic, type Doctor, type Patient } from './clinic.ts';
 import { patientLanguage } from './patient-language.ts';
+import { specialties, type Specialty } from './rx-templates.ts';
 
 export type MedicineTiming = '' | 'after' | 'before' | 'with' | 'empty' | 'bedtime';
 export type Medicine = { id: string; name: string; frequency: string; timing: MedicineTiming; days: string; notes: string };
 export type Vitals = { bp: string; pulse: string; temp: string; weight: string; spo2: string };
 export type Prescription = {
   id: string; clinicId: string; patientId: string; doctorId: string; appointmentId: string;
-  date: string; age: string; sex: '' | 'M' | 'F' | 'O';
-  vitals: Vitals; complaints: string; diagnosis: string;
+  date: string; age: string; sex: '' | 'M' | 'F' | 'O'; specialty: Specialty;
+  vitals: Vitals; history: string; complaints: string; teeth: number[]; findings: string; diagnosis: string;
+  procedures: string; plan: string;
   medicines: Medicine[]; advice: string; tests: string; followUp: string;
   createdAt: string; sentAt: string;
 };
@@ -19,23 +21,22 @@ export const timings: { value: MedicineTiming; label: string }[] = [
   { value: 'bedtime', label: 'At bedtime' }, { value: '', label: 'Any time' },
 ];
 export const dayPresets = ['3', '5', '7', '10', '15', '30'];
-export const adviceChips = ['Drink plenty of fluids', 'Take adequate rest', 'Avoid oily and spicy food', 'Steam inhalation twice daily', 'Warm salt-water gargles', 'Walk 30 minutes daily', 'Complete the full course of antibiotics', 'Return immediately if symptoms worsen'];
-export const commonMedicines = [
-  'Tab Paracetamol 500 mg', 'Tab Paracetamol 650 mg', 'Tab Dolo 650', 'Tab Ibuprofen 400 mg', 'Tab Aceclofenac 100 mg',
-  'Tab Cetirizine 10 mg', 'Tab Levocetirizine 5 mg', 'Tab Montelukast 10 mg', 'Tab Fexofenadine 120 mg',
-  'Tab Pantoprazole 40 mg', 'Cap Omeprazole 20 mg', 'Tab Rabeprazole 20 mg', 'Tab Domperidone 10 mg', 'Tab Ondansetron 4 mg',
-  'Cap Amoxicillin 500 mg', 'Tab Amoxicillin + Clavulanate 625 mg', 'Tab Azithromycin 500 mg', 'Tab Cefixime 200 mg', 'Tab Ciprofloxacin 500 mg', 'Tab Metronidazole 400 mg', 'Tab Doxycycline 100 mg',
-  'Tab Metformin 500 mg', 'Tab Glimepiride 1 mg', 'Tab Amlodipine 5 mg', 'Tab Telmisartan 40 mg', 'Tab Losartan 50 mg', 'Tab Atorvastatin 10 mg', 'Tab Rosuvastatin 10 mg', 'Tab Aspirin 75 mg',
-  'Tab Thyroxine 50 mcg', 'Tab Vitamin D3 60000 IU', 'Tab Calcium + Vitamin D3', 'Cap Vitamin B-complex', 'Tab Folic acid 5 mg', 'Tab Iron + Folic acid',
-  'Syp Paracetamol 250 mg/5 ml', 'Syp Cetirizine 5 mg/5 ml', 'Syp Ambroxol', 'Syp Dextromethorphan', 'ORS sachet',
-  'Inhaler Salbutamol 100 mcg', 'Inhaler Budesonide + Formoterol', 'Drops Ciprofloxacin eye/ear', 'Nasal spray Oxymetazoline', 'Cream Clotrimazole 1%', 'Ointment Mupirocin 2%', 'Gel Diclofenac',
-];
 
 export const blankMedicine = (): Medicine => ({ id: crypto.randomUUID(), name: '', frequency: '1-0-1', timing: 'after', days: '5', notes: '' });
 export const blankVitals = (): Vitals => ({ bp: '', pulse: '', temp: '', weight: '', spo2: '' });
 export function blankPrescription(clinic: Clinic, date: string, patientId = '', doctorId = '', appointmentId = ''): Prescription {
-  return { id: crypto.randomUUID(), clinicId: clinic.id, patientId, doctorId: doctorId || clinic.doctors[0]?.id || '', appointmentId, date, age: '', sex: '', vitals: blankVitals(), complaints: '', diagnosis: '', medicines: [blankMedicine()], advice: '', tests: '', followUp: '', createdAt: '', sentAt: '' };
+  const doctor = clinic.doctors.find(d => d.id === doctorId) || clinic.doctors[0];
+  const specialty = doctor?.padSpecialty || clinic.rxPad?.specialty || 'general';
+  return { id: crypto.randomUUID(), clinicId: clinic.id, patientId, doctorId: doctor?.id || '', appointmentId, date, age: '', sex: '', specialty, vitals: blankVitals(), history: '', complaints: '', teeth: [], findings: '', diagnosis: '', procedures: '', plan: '', medicines: [blankMedicine()], advice: '', tests: '', followUp: '', createdAt: '', sentAt: '' };
 }
+
+/** Prescriptions saved before specialty pads existed lack the newer fields. */
+export function withDefaults(rx: Partial<Prescription> & Pick<Prescription, 'id' | 'clinicId'>): Prescription {
+  return { patientId: '', doctorId: '', appointmentId: '', date: '', age: '', sex: '', specialty: 'general', history: '', complaints: '', teeth: [], findings: '', diagnosis: '', procedures: '', plan: '', medicines: [], advice: '', tests: '', followUp: '', createdAt: '', sentAt: '', ...rx, vitals: { ...blankVitals(), ...rx.vitals } };
+}
+
+/** "36, 37" with tooth names for the patient-facing message. */
+export const teethText = (teeth: number[]) => [...teeth].sort((a, b) => a - b).join(', ');
 
 /** Copy a previous prescription into a new draft dated today (for "repeat last Rx"). */
 export function repeatPrescription(previous: Prescription, date: string, doctorId?: string, appointmentId = ''): Prescription {
@@ -73,7 +74,7 @@ export function validatePrescription(rx: Prescription, patients: Patient[], doct
   if (!doctors.some(d => d.id === rx.doctorId)) throw new Error('Choose the prescribing doctor.');
   if (!/^\d{4}-\d{2}-\d{2}$/.test(rx.date)) throw new Error('Choose a valid prescription date.');
   const meds = rx.medicines.filter(m => m.name.trim());
-  if (!meds.length && !rx.advice.trim() && !rx.tests.trim()) throw new Error('Add at least one medicine, test or advice.');
+  if (!meds.length && !rx.advice.trim() && !rx.tests.trim() && !rx.procedures.trim() && !rx.plan.trim()) throw new Error('Add at least one medicine, treatment, test or advice.');
   if (meds.some(m => m.days.trim() && !/^\d{1,3}$/.test(m.days.trim()))) throw new Error('Enter medicine duration as a number of days.');
   if (rx.followUp && rx.followUp < rx.date) throw new Error('Follow-up date must be after the prescription date.');
 }
@@ -81,7 +82,7 @@ export function validatePrescription(rx: Prescription, patients: Patient[], doct
 /** Drops empty medicine rows and trims text before saving. */
 export function cleanPrescription(rx: Prescription): Prescription {
   const t = (s: string) => s.trim();
-  return { ...rx, age: t(rx.age), complaints: t(rx.complaints), diagnosis: t(rx.diagnosis), advice: t(rx.advice), tests: t(rx.tests),
+  return { ...rx, age: t(rx.age), history: t(rx.history), complaints: t(rx.complaints), findings: t(rx.findings), diagnosis: t(rx.diagnosis), procedures: t(rx.procedures), plan: t(rx.plan), advice: t(rx.advice), tests: t(rx.tests), teeth: [...rx.teeth].sort((a, b) => a - b),
     vitals: { bp: t(rx.vitals.bp), pulse: t(rx.vitals.pulse), temp: t(rx.vitals.temp), weight: t(rx.vitals.weight), spo2: t(rx.vitals.spo2) },
     medicines: rx.medicines.filter(m => m.name.trim()).map(m => ({ ...m, name: t(m.name), days: t(m.days), notes: t(m.notes) })) };
 }
@@ -98,10 +99,17 @@ export function prescriptionMessage(rx: Prescription, clinic: Clinic, patient: P
   lines.push(`Date: ${dateLabel(rx.date, { day: 'numeric', month: 'short', year: 'numeric' })}`, '');
   const who = [patient?.name, [rx.age && `${rx.age} y`, rx.sex].filter(Boolean).join(', ')].filter(Boolean).join(' · ');
   if (who) lines.push(`*Patient:* ${who}`);
+  const preset = specialties[rx.specialty] || specialties.general;
+  const label = (k: keyof typeof preset.labels, fallback: string) => preset.labels[k] || fallback;
   const vitals = vitalsLine(rx.vitals);
   if (vitals) lines.push(`*Vitals:* ${vitals}`);
-  if (rx.complaints.trim()) lines.push(`*Complaints:* ${rx.complaints.trim()}`);
+  if (rx.history.trim()) lines.push(`*${label('history', 'Medical history')}:* ${rx.history.trim()}`);
+  if (rx.complaints.trim()) lines.push(`*${label('complaints', 'Complaints')}:* ${rx.complaints.trim()}`);
+  if (rx.teeth.length) lines.push(`*Teeth:* ${teethText(rx.teeth)}`);
+  if (rx.findings.trim()) lines.push(`*${label('findings', 'Findings')}:* ${rx.findings.trim()}`);
   if (rx.diagnosis.trim()) lines.push(`*Diagnosis:* ${rx.diagnosis.trim()}`);
+  if (rx.procedures.trim()) lines.push(`*${label('procedures', 'Procedure')}:* ${rx.procedures.trim()}`);
+  if (rx.plan.trim()) lines.push(`*${label('plan', 'Plan')}:* ${rx.plan.trim()}`);
   const meds = rx.medicines.filter(m => m.name.trim());
   if (meds.length) {
     lines.push('', '*℞ Medicines*');

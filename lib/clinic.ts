@@ -1,6 +1,7 @@
 import type { PatientLanguage } from './patient-language';
-export type Doctor = { id: string; name: string; specialty: string; email?: string };
-export type Clinic = { id: string; name: string; address: string; phone: string; timezone: string; opens: string; closes: string; doctors: Doctor[]; doctorDigestEnabled?: boolean; doctorDigestTime?: string };
+import type { RxPad, Specialty } from './rx-templates';
+export type Doctor = { id: string; name: string; specialty: string; email?: string; qualification?: string; regNo?: string; padSpecialty?: Specialty };
+export type Clinic = { id: string; name: string; address: string; phone: string; timezone: string; opens: string; closes: string; doctors: Doctor[]; doctorDigestEnabled?: boolean; doctorDigestTime?: string; rxPad?: Partial<RxPad> };
 export type Patient = { id: string; clinicId: string; name: string; phone: string; consent: boolean; language?: PatientLanguage };
 export type Appointment = { id: string; clinicId: string; patientId: string; doctorId: string; date: string; time: string; duration: number; reason: string; status: 'scheduled'|'completed'|'cancelled'|'missed' };
 export type Reminder = { id: string; clinicId: string; patientId: string; date: string; time: string; message: string; status: 'scheduled'|'simulated-sent'|'cancelled'; sentAt?: string; sentMessage?: string };

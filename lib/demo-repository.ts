@@ -19,6 +19,14 @@ function demoData() {
   const db = seed();
   const date = db.appointments[0].date;
   db.patients.forEach((p, i) => { p.language = (['en', 'hi', 'mr'] as const)[i % 3]; });
+  const dental = db.clinics[0];
+  Object.assign(dental, { name: 'Greenleaf Dental Care', rxPad: { specialty: 'dental', style: 'classic', accent: '#1f5fbf', tagline: 'Complete family dental care', footer: 'Mon–Sat 9 AM – 7 PM · For emergencies call the clinic number', paper: 'A5' } });
+  dental.doctors = [
+    { id: 'priya', name: 'Dr. Priya Nair', specialty: 'Endodontist', qualification: 'BDS, MDS (Conservative Dentistry & Endodontics)', regNo: 'A-12345', padSpecialty: 'dental' },
+    { id: 'arjun', name: 'Dr. Arjun Mehta', specialty: 'Pedodontist', qualification: 'BDS, MDS (Pediatric Dentistry)', regNo: 'A-23456', padSpecialty: 'dental' },
+  ];
+  const reasons = ['Toothache', 'Root canal – session 2', 'Scaling & polishing', 'Extraction', 'Filling', 'Check-up'];
+  db.appointments.forEach((a, i) => { a.reason = reasons[i % reasons.length]; });
   // A couple of past visits with no outcome yet, so the front-desk queue has work in it.
   db.appointments.push(
     { id: 'past1', clinicId: 'greenleaf', patientId: 'p3', doctorId: 'priya', date: addDays(date, -1), time: '11:00', duration: 30, reason: 'Follow-up visit', status: 'scheduled' },
@@ -29,12 +37,13 @@ function demoData() {
     appointmentDate: a.date, appointmentTime: a.time, status: i === 4 ? 'failed' : 'accepted', error: i === 4 ? 'Template rejected by provider' : undefined,
   }));
   const prescriptions: Prescription[] = [{
-    id: 'rx1', clinicId: 'greenleaf', patientId: 'p0', doctorId: 'priya', appointmentId: 'a0', date, age: '34', sex: 'M',
-    vitals: { bp: '124/80', pulse: '82', temp: '100.4', weight: '72', spo2: '98' }, complaints: 'Fever and body ache for 2 days', diagnosis: 'Acute viral fever',
+    id: 'rx1', clinicId: 'greenleaf', patientId: 'p0', doctorId: 'priya', appointmentId: 'a0', date, age: '34', sex: 'M', specialty: 'dental',
+    vitals: { bp: '124/80', pulse: '', temp: '', weight: '', spo2: '' }, history: 'Diabetic', complaints: 'Pain in lower left back tooth for 3 days, worse at night', teeth: [36],
+    findings: 'Deep occlusal caries, tender on percussion', diagnosis: 'Irreversible pulpitis', procedures: 'RCT – access opening', plan: 'Root canal treatment\nCrown',
     medicines: [
-      { id: 'm1', name: 'Tab Paracetamol 650 mg', frequency: '1-1-1', timing: 'after', days: '3', notes: 'Only if temperature above 100°F' },
-      { id: 'm2', name: 'Tab Cetirizine 10 mg', frequency: '0-0-1', timing: 'bedtime', days: '5', notes: '' },
-    ], advice: 'Drink plenty of fluids\nTake adequate rest', tests: 'CBC if fever persists beyond 3 days', followUp: addDays(date, 5), createdAt: new Date().toISOString(), sentAt: new Date().toISOString(),
+      { id: 'm1', name: 'Tab Amoxicillin + Clavulanate 625 mg', frequency: '1-0-1', timing: 'after', days: '5', notes: '' },
+      { id: 'm2', name: 'Tab Aceclofenac + Paracetamol', frequency: '1-0-1', timing: 'after', days: '3', notes: 'Only if there is pain' },
+    ], advice: 'Avoid chewing on the treated side\nComplete the full course of antibiotics', tests: 'IOPA 36', followUp: addDays(date, 7), createdAt: new Date().toISOString(), sentAt: new Date().toISOString(),
   }];
   return { db, deliveries, prescriptions, digests: [] as DoctorDigestDelivery[] };
 }
@@ -55,5 +64,13 @@ export function createDemoRepository(): Repository {
     savePatient: async p => { state.db.patients = upsert(state.db.patients, p); return later(); },
     saveAppointment: async a => { state.db.appointments = upsert(state.db.appointments, a); return later(); },
     savePrescription: async rx => { state.prescriptions = upsert(state.prescriptions, rx); return later(); },
+    sendPrescription: async (id, pdf) => {
+      const rx = state.prescriptions.find(p => p.id === id)!;
+      console.info(`Demo: would send a ${Math.round(pdf.length * 0.75 / 1024)} KB prescription PDF via MSG91`);
+      state.prescriptions = upsert(state.prescriptions, { ...rx, sentAt: new Date().toISOString() });
+      state.deliveries = [...state.deliveries, { id: 'rx-' + id + Date.now(), clinicId: rx.clinicId, appointmentId: rx.appointmentId, patientId: rx.patientId, slot: 'prescription', appointmentDate: rx.date, appointmentTime: '', status: 'accepted' }];
+      await later();
+      return { status: 'accepted' as const };
+    },
   };
 }

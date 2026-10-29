@@ -35,7 +35,7 @@ export function PrescriptionsView({ w }: { w: Workspace }) {
   </div>;
 }
 
-const slotLabel: Record<string, string> = { booked: 'Booking confirmation', two_days_before: '2-day reminder', appointment_day: 'Appointment-day reminder', missed_day_one: 'Missed visit · follow-up', missed_day_seven: 'Missed visit · day 7' };
+const slotLabel: Record<string, string> = { booked: 'Booking confirmation', two_days_before: '2-day reminder', appointment_day: 'Appointment-day reminder', missed_day_one: 'Missed visit · follow-up', missed_day_seven: 'Missed visit · day 7', prescription: 'Prescription (PDF)' };
 
 export function MessagesView({ w }: { w: Workspace }) {
   const issues = w.deliveries.filter(d => d.status === 'failed' || d.status === 'unknown');
@@ -44,12 +44,12 @@ export function MessagesView({ w }: { w: Workspace }) {
   return <div className="page">
     <header className="page-head"><div><p className="eyebrow">Automatic WhatsApp</p><h1>Messages</h1></div>
       <Chips label="Filter" size="sm" value={filter} onChange={setFilter} options={[{ value: 'issues', label: `Issues (${issues.length})` }, { value: 'all', label: `All (${w.deliveries.length})` }]} /></header>
-    <p className="lede">Patients with consent get a confirmation when booked, a reminder 2 days before and at 8 AM on the day. Marking a visit Missed sends a follow-up right away and again 7 days after the visit. “Sent” means the provider accepted it.</p>
+    <p className="lede">Prescriptions sent from the builder appear here too. Patients with consent get a confirmation when booked, a reminder 2 days before and at 8 AM on the day. Marking a visit Missed sends a follow-up right away and again 7 days after the visit. “Sent” means the provider accepted it.</p>
     <section className="card card-flush">
       {list.length ? <div className="table" role="table">
         <div className="tr th" role="row"><span>Visit</span><span>Patient</span><span>Message</span><span>Language</span><span>Status</span></div>
         {list.map(d => { const p = w.patient(d.patientId); const a = w.appointments.find(x => x.id === d.appointmentId); return <button key={d.id} className="tr" role="row" onClick={() => a && w.openAppointment(a)}>
-          <span className="td-date">{dateLabel(d.appointmentDate, { day: 'numeric', month: 'short' })}<small>{clockLabel(d.appointmentTime)}</small></span>
+          <span className="td-date">{dateLabel(d.appointmentDate, { day: 'numeric', month: 'short' })}<small>{d.appointmentTime ? clockLabel(d.appointmentTime) : ''}</small></span>
           <span className="td-who"><Avatar name={p?.name || '?'} size="sm" />{p?.name || 'Patient removed'}</span>
           <span className="td-main"><strong>{slotLabel[d.slot] || d.slot}</strong>{d.error && <small className="text-danger"><AlertCircle size={12} /> {d.error}</small>}</span>
           <span className="td-muted">{d.patientLanguage ? patientLanguageLabel(d.patientLanguage).replace('English + ', '+ ') : '—'}</span>

@@ -33,9 +33,13 @@ Try the UI without signing in at `http://localhost:5173/?demo` (localhost only; 
 
 ## Prescriptions
 
-Write a prescription from Today’s queue, an appointment, a patient’s page or with `R`: vitals, complaints, diagnosis, medicines (dose chips like 1-0-1, food timing, days), advice, tests and follow-up. **Send on WhatsApp** saves it and opens WhatsApp (app or web) on that computer with the formatted prescription addressed to the patient — press send there. For Hindi or Marathi patients, each dosage line is repeated in their language. **Print** prints an A5 pad (or save as PDF). Shortcuts in the builder: `Ctrl+S` save, `Ctrl+Enter` send, `Ctrl+P` print.
+Write a prescription from Today’s queue, an appointment, a patient’s page or with `R`. **Settings → Prescription pad** chooses the clinic’s specialty (Dental, General physician, Pediatrics, Dermatology), layout (Classic, Colour band, Minimal), colour, A5/A4 paper, tagline and footer, plus each doctor’s qualification, registration number and own pad specialty. The specialty decides which sections the builder shows and its quick-pick lists (`lib/rx-templates.ts`).
 
-Prescriptions are stored in the `prescriptions` Firestore collection. Deploy the updated rules before using it in production: `npx firebase-tools deploy --only firestore:rules --project relapse-clinic-db`.
+The **Dental** pad adds medical history and allergies, an FDI tooth chart (adult and milk teeth), clinical findings, diagnosis, treatment done today and treatment advised, with dental medicines and post-procedure advice. The selected teeth are drawn on the printed pad.
+
+**Send on WhatsApp** saves the prescription, renders the pad to a PDF in the browser (`lib/pdf.ts`) and sends it from the clinic’s MSG91 WhatsApp number (`sendPrescription` function; see [functions/MSG91_SETUP.md](functions/MSG91_SETUP.md#prescription-template-pdf) for the template to get approved). **My WhatsApp** is the fallback: it opens WhatsApp on the computer with the prescription as text. **PDF** downloads the same file; **Print** prints it. For Hindi or Marathi patients each dosage line is repeated in their language. Shortcuts: `Ctrl+S` save, `Ctrl+Enter` send, `Ctrl+P` print.
+
+Prescriptions are stored in the `prescriptions` Firestore collection; sent PDFs in `prescriptionFiles` (server only).
 
 ## Impact dashboard
 

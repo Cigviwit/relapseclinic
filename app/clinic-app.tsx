@@ -6,7 +6,7 @@ import { type Appointment, type Database, type Patient, clockLabel, initials, va
 import { firestoreRepository, type DoctorDigestDelivery, type MessageDelivery, type Repository } from '@/lib/firestore-repository';
 import { createDemoRepository, demoAccount, isDemoMode } from '@/lib/demo-repository';
 import { authService, getAccount, type Account } from '@/lib/auth-service';
-import { blankPrescription, repeatPrescription, type Prescription } from '@/lib/prescription';
+import { blankPrescription, repeatPrescription, withDefaults, type Prescription } from '@/lib/prescription';
 import { unresolvedVisits } from '@/lib/unresolved';
 import AuthView from '@/components/auth/auth-view';
 import { Logo } from '@/components/logo';
@@ -109,7 +109,7 @@ export default function ClinicApp() {
       appointments: db.appointments.filter(a => a.clinicId === clinic.id),
       deliveries: deliveries.filter(d => d.clinicId === clinic.id),
       digests: digests.filter(d => d.clinicId === clinic.id),
-      prescriptions: prescriptions.filter(r => r.clinicId === clinic.id),
+      prescriptions: prescriptions.filter(r => r.clinicId === clinic.id).map(withDefaults),
     };
   }, [db, clinic, deliveries, digests, prescriptions]);
 

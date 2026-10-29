@@ -1,10 +1,13 @@
 "use client";
 import { useState } from 'react';
 import { toast } from 'sonner';
-import { Building2, LogOut, Mail } from 'lucide-react';
+import { Building2, FileText, LogOut, Mail } from 'lucide-react';
 import { dateLabel, minutes, today, type Clinic } from '@/lib/clinic';
 import { authService } from '@/lib/auth-service';
 import { ClinicForm } from '../clinic-forms';
+import { PadSettings } from '../prescription/pad-settings';
+import type { RxPad } from '@/lib/rx-templates';
+import type { Doctor } from '@/lib/clinic';
 import { Status } from '../kit';
 import type { Workspace } from './types';
 
@@ -14,10 +17,15 @@ export default function SettingsView({ w, onCreateClinic, demo }: { w: Workspace
   const missingEmail = !clinic.doctors.length || clinic.doctors.some(d => !/^\S+@\S+\.\S+$/.test(d.email || ''));
   const digests = w.digests.slice().sort((a, b) => (b.createdAt?.toDate?.()?.getTime() || 0) - (a.createdAt?.toDate?.()?.getTime() || 0)).slice(0, 8);
 
-  function save(c: Clinic) {
-    if (w.appointments.some(a => a.status === 'scheduled' && a.date >= today(c.timezone) && (minutes(a.time) < minutes(c.opens) || minutes(a.time) + a.duration > minutes(c.closes))))
+  function save(form: Clinic) {
+    if (w.appointments.some(a => a.status === 'scheduled' && a.date >= today(form.timezone) && (minutes(a.time) < minutes(form.opens) || minutes(a.time) + a.duration > minutes(form.closes))))
       return toast.error('Some upcoming appointments fall outside these hours. Reschedule them before changing clinic hours.');
-    w.repo.saveClinic(c).then(() => toast.success('Clinic settings saved')).catch(e => toast.error(e.message));
+    // Keep pad details from the latest clinic record; this form only edits clinic and doctor basics.
+    const doctors = form.doctors.map(d => { const live = clinic.doctors.find(x => x.id === d.id); return live ? { ...live, name: d.name, specialty: d.specialty, email: d.email } : d; });
+    w.repo.saveClinic({ ...form, doctors, ...(clinic.rxPad ? { rxPad: clinic.rxPad } : {}) }).then(() => toast.success('Clinic settings saved')).catch(e => toast.error(e.message));
+  }
+  function savePad(rxPad: RxPad, doctors: Doctor[]) {
+    w.repo.saveClinic({ ...clinic, rxPad, doctors }).then(() => toast.success('Prescription pad saved')).catch(e => toast.error(e.message));
   }
   async function sendDigest() {
     if (sending) return;
@@ -37,6 +45,7 @@ export default function SettingsView({ w, onCreateClinic, demo }: { w: Workspace
 
   return <div className="page">
     <header className="page-head"><div><p className="eyebrow">{clinic.name}</p><h1>Settings</h1></div></header>
+    <section className="card" id="pad"><h2 className="card-title"><FileText size={16} />Prescription pad</h2><PadSettings key={clinic.id} clinic={clinic} onSave={savePad} /></section>
     <div className="split">
       <section className="card"><ClinicForm key={clinic.id} clinic={clinic} onSave={save} /></section>
       <aside className="rail">

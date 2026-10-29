@@ -14,7 +14,10 @@ export type Repository = {
   savePatient(patient: Patient): Promise<void>;
   saveAppointment(appointment: Appointment): Promise<void>;
   savePrescription(prescription: Prescription): Promise<void>;
+  /** Sends the PDF through the clinic's MSG91 WhatsApp number. */
+  sendPrescription(prescriptionId: string, pdfBase64: string, fileName: string): Promise<SendResult>;
 };
+export type SendResult = { status: 'accepted' | 'failed' | 'unknown'; error?: string };
 
 /** Admin sees every clinic's records; a clinic account only its own. */
 const scoped = (account: Account, name: string) => account.role === "admin"
@@ -33,6 +36,11 @@ export const firestoreRepository: Repository = {
   savePatient: (patient: Patient) => setDoc(doc(firestore, "patients", patient.id), patient),
   saveAppointment: (appointment: Appointment) => setDoc(doc(firestore, "appointments", appointment.id), appointment),
   savePrescription: (prescription: Prescription) => setDoc(doc(firestore, "prescriptions", prescription.id), prescription),
+  async sendPrescription(prescriptionId, pdf, fileName) {
+    const [{ getFunctions, httpsCallable }, { app }] = await Promise.all([import("firebase/functions"), import("./firebase")]);
+    const send = httpsCallable<{ prescriptionId: string; pdf: string; fileName: string; requestId: string }, SendResult>(getFunctions(app, "asia-south1"), "sendPrescription", { timeout: 70000 });
+    return (await send({ prescriptionId, pdf, fileName, requestId: crypto.randomUUID() })).data;
+  },
 
   subscribeDatabase(account, onUpdate, onError) {
     const clinicId = account.clinicId;

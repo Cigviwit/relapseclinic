@@ -81,8 +81,10 @@ function appointmentMessage(config, appointment, patient, clinic, slot) {
   return { templateName: selected[key], language: selected.language || 'en', preference, values };
 }
 
-function msg91Payload(config, to, templateName, values, deliveryIdValue) {
+// header: optional media header, e.g. { type: 'document', value: url, filename }.
+function msg91Payload(config, to, templateName, values, deliveryIdValue, header) {
   const components = Object.fromEntries(values.map((value, i) => [`body_${i + 1}`, { type: 'text', value: String(value) }]));
+  if (header) components.header_1 = header;
   return {
     integrated_number: config.integratedNumber.replace(/\D/g, ''),
     content_type: 'template',
@@ -97,6 +99,25 @@ function msg91Payload(config, to, templateName, values, deliveryIdValue) {
       },
     },
   };
+}
+
+// Template body: "Hello {{1}}, your prescription from {{2}} at {{3}} dated {{4}} is attached.
+// For any questions, please call {{5}}." with the PDF as a document header.
+function prescriptionValues(prescription, patient, clinic) {
+  const doctor = clinic.doctors.find((item) => item.id === prescription.doctorId)?.name;
+  if (!doctor) throw new Error('Prescription doctor no longer exists');
+  const day = new Intl.DateTimeFormat('en-IN', { timeZone: 'UTC', day: 'numeric', month: 'long', year: 'numeric' })
+    .format(new Date(`${prescription.date}T12:00:00Z`));
+  return [patient.name, doctor, clinic.name, day, clinic.phone];
+}
+
+function prescriptionFileName(value) {
+  const clean = String(value || '').replace(/[^\w .-]+/g, '').replace(/\s+/g, '-').slice(0, 80);
+  return /\.pdf$/i.test(clean) ? clean : `${clean || 'Prescription'}.pdf`;
+}
+
+function prescriptionDeliveryId(prescriptionId, requestId) {
+  return `rx_${createHash('sha256').update(JSON.stringify([prescriptionId, requestId])).digest('hex').slice(0, 32)}`;
 }
 
 function hasReplacementAppointment(appointment, otherAppointments) {
@@ -145,4 +166,4 @@ function manualDoctorDigestId(clinicId, doctorId, date, requestId) {
   return createHash('sha256').update(JSON.stringify(['manual', clinicId, doctorId, date, requestId])).digest('hex');
 }
 
-module.exports = { addDays, localNow, slotFor, missedDueNow, deliveryId, bodyValues, appointmentMessage, msg91Payload, hasReplacementAppointment, digestDue, doctorDigest, doctorDigestId, manualDoctorDigestId };
+module.exports = { addDays, localNow, slotFor, missedDueNow, deliveryId, bodyValues, appointmentMessage, msg91Payload, prescriptionValues, prescriptionFileName, prescriptionDeliveryId, hasReplacementAppointment, digestDue, doctorDigest, doctorDigestId, manualDoctorDigestId };

@@ -2,7 +2,7 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     // users/{uid}: uid, email, clinicId, createdAt (strings); admin writes only.
-    // clinics/{id}: core details, doctors (with optional email addresses), optional doctor digest settings.
+    // clinics/{id}: core details, doctors (optional email, qualification, registration no., pad specialty), optional doctor digest and prescription pad settings.
     // patients/{id}: id, clinicId, name, phone (strings), consent (bool), optional language (en/mr/hi).
     // appointments/{id}: id, clinicId, patientId, doctorId, date, time, reason, status (strings), duration (int).
     // prescriptions/{id}: id, clinicId, patientId, doctorId, date, medicines (list), createdAt; optional vitals, notes, follow-up, sentAt.
@@ -18,7 +18,8 @@ service cloud.firestore {
     function optionalText(data, field, max) { return !(field in data) || text(data[field], max); }
     function validClinic(data, id) {
       return data.keys().hasAll(['id','name','address','phone','timezone','opens','closes','doctors'])
-        && data.keys().hasOnly(['id','name','address','phone','timezone','opens','closes','doctors','doctorDigestEnabled','doctorDigestTime'])
+        && data.keys().hasOnly(['id','name','address','phone','timezone','opens','closes','doctors','doctorDigestEnabled','doctorDigestTime','rxPad'])
+        && (!('rxPad' in data) || (data.rxPad is map && data.rxPad.size() <= 10))
         && data.id == id && text(data.name, 100) && text(data.address, 250)
         && text(data.phone, 20) && text(data.timezone, 80)
         && text(data.opens, 5) && text(data.closes, 5)
@@ -57,7 +58,8 @@ service cloud.firestore {
     }
     function validPrescription(data, id) {
       return data.keys().hasAll(['id','clinicId','patientId','doctorId','date','medicines','createdAt'])
-        && data.keys().hasOnly(['id','clinicId','patientId','doctorId','appointmentId','date','age','sex','vitals','complaints','diagnosis','medicines','advice','tests','followUp','createdAt','sentAt'])
+        && data.keys().hasOnly(['id','clinicId','patientId','doctorId','appointmentId','date','age','sex','specialty','vitals','history','complaints','teeth','findings','diagnosis','procedures','plan','medicines','advice','tests','followUp','createdAt','sentAt'])
+        && (!('teeth' in data) || (data.teeth is list && data.teeth.size() <= 52))
         && data.id == id && text(data.clinicId, 100) && text(data.patientId, 100)
         && text(data.doctorId, 100) && text(data.date, 10) && text(data.createdAt, 40)
         && data.medicines is list && data.medicines.size() <= 40
