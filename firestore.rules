@@ -36,11 +36,12 @@ service cloud.firestore {
 
     function validClinic(data, id) {
       return data.keys().hasAll(['id','name','address','phone','timezone','opens','closes','doctors'])
-        && data.keys().hasOnly(['id','name','address','phone','timezone','opens','closes','doctors','doctorDigestEnabled','doctorDigestTime','rxPad','prescriptionsEnabled','billingEnabled','billing','autoLockMinutes','updatedBy'])
+        && data.keys().hasOnly(['id','name','address','phone','timezone','opens','closes','doctors','doctorDigestEnabled','doctorDigestTime','rxPad','prescriptionsEnabled','billingEnabled','billing','autoLockMinutes','closedDates','updatedBy'])
         && (!('rxPad' in data) || (data.rxPad is map && data.rxPad.size() <= 10))
         && (!('prescriptionsEnabled' in data) || data.prescriptionsEnabled is bool)
         && (!('billingEnabled' in data) || data.billingEnabled is bool)
         && (!('billing' in data) || (data.billing is map && data.billing.size() <= 6 && data.billing.fees is list && data.billing.fees.size() <= 200))
+        && (!('closedDates' in data) || (data.closedDates is list && data.closedDates.size() <= 100))
         && (!('autoLockMinutes' in data) || (data.autoLockMinutes is int && data.autoLockMinutes >= 0 && data.autoLockMinutes <= 240))
         && data.id == id && text(data.name, 100) && text(data.address, 250)
         && text(data.phone, 20) && text(data.timezone, 80)

@@ -1,10 +1,11 @@
 import { minutes, zonedNow, type Appointment, type Clinic } from './clinic.ts';
+import { doctorDay } from './availability.ts';
 
 const hhmm = (m: number) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
 
 /**
  * Start times (HH:MM) at which `doctorId` is free for `duration` minutes on `date`,
- * inside clinic hours and not in the past (clinic timezone).
+ * inside their working sessions and not in the past (clinic timezone).
  */
 export function freeSlots(appointments: Appointment[], clinic: Clinic, doctorId: string, date: string, duration: number, excludeId?: string, step = 15, now = new Date()) {
   const busy = appointments.filter(a => a.clinicId === clinic.id && a.doctorId === doctorId && a.date === date && a.status !== 'cancelled' && a.id !== excludeId)
@@ -13,10 +14,12 @@ export function freeSlots(appointments: Appointment[], clinic: Clinic, doctorId:
   const earliest = date < local.date ? Infinity : date === local.date ? minutes(local.time) + 1 : -Infinity;
   const slots: string[] = [];
   if (!(duration > 0)) return slots;
-  for (let t = minutes(clinic.opens); t + duration <= minutes(clinic.closes); t += step) {
-    if (t < earliest) continue;
-    if (busy.some(([s, e]) => t < e && t + duration > s)) continue;
-    slots.push(hhmm(t));
+  for (const session of doctorDay(clinic, doctorId, date).sessions) {
+    for (let t = minutes(session.start); t + duration <= minutes(session.end); t += step) {
+      if (t < earliest) continue;
+      if (busy.some(([s, e]) => t < e && t + duration > s)) continue;
+      slots.push(hhmm(t));
+    }
   }
   return slots;
 }

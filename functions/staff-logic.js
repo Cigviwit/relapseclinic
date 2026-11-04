@@ -56,12 +56,13 @@ async function createLogin(db, auth, clinicId, staff, actorUid) {
 
 async function createStaff(db, auth, caller, input) {
   const { clinicId } = input || {};
-  const clinic = await loadClinic(db, clinicId);
   const actor = await resolveActor(db, caller, clinicId, managers, 'manage staff');
+  const clinic = await loadClinic(db, clinicId);
   return createLogin(db, auth, clinicId, cleanStaff(input, clinic), actor.uid);
 }
 
 async function updateStaff(db, auth, caller, input) {
+  if (!caller?.uid) throw new ServiceError('unauthenticated', 'Sign in to manage staff.');
   const { uid } = input || {};
   if (typeof uid !== 'string' || !uid) throw new ServiceError('invalid-argument', 'A staff member is required.');
   const ref = db.doc(`users/${uid}`);
@@ -85,6 +86,7 @@ async function updateStaff(db, auth, caller, input) {
 }
 
 async function staffSetupLink(db, auth, caller, input) {
+  if (!caller?.uid) throw new ServiceError('unauthenticated', 'Sign in to manage staff.');
   const snap = await db.doc(`users/${typeof input?.uid === 'string' && input.uid ? input.uid : '-'}`).get();
   if (!snap.exists) throw new ServiceError('not-found', 'Staff member not found.');
   await resolveActor(db, caller, snap.data().clinicId, managers, 'manage staff');

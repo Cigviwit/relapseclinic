@@ -3,6 +3,7 @@ import { toast } from 'sonner';
 import { Building2, FileText, IndianRupee, LogOut, Mail } from 'lucide-react';
 import { roleLabel } from '@/lib/permissions';
 import { StaffSettings } from './staff-settings';
+import { ScheduleSettings } from './schedule-settings';
 import { ActivityLog, AutoLockSetting, DataExport, TwoStepSetting } from './security-settings';
 import { dateLabel, minutes, today, type Clinic } from '@/lib/clinic';
 import { authService } from '@/lib/auth-service';
@@ -26,7 +27,7 @@ export default function SettingsView({ w, onCreateClinic, demo }: { w: Workspace
     // Keep pad details from the latest clinic record; this form only edits clinic and doctor basics.
     const doctors = form.doctors.map(d => { const live = clinic.doctors.find(x => x.id === d.id); return live ? { ...live, name: d.name, specialty: d.specialty, email: d.email } : d; });
     // The form may hold an older copy; the prescription switch is only changed by the administrator below.
-    w.repo.saveClinic({ ...form, doctors, ...(clinic.rxPad ? { rxPad: clinic.rxPad } : {}), ...(clinic.prescriptionsEnabled !== undefined ? { prescriptionsEnabled: clinic.prescriptionsEnabled } : {}), ...(clinic.billingEnabled !== undefined ? { billingEnabled: clinic.billingEnabled } : {}), ...(clinic.billing ? { billing: clinic.billing } : {}), ...(clinic.autoLockMinutes !== undefined ? { autoLockMinutes: clinic.autoLockMinutes } : {}) }).then(() => toast.success('Clinic settings saved')).catch(e => toast.error(e.message));
+    w.repo.saveClinic({ ...form, doctors, ...(clinic.rxPad ? { rxPad: clinic.rxPad } : {}), ...(clinic.prescriptionsEnabled !== undefined ? { prescriptionsEnabled: clinic.prescriptionsEnabled } : {}), ...(clinic.billingEnabled !== undefined ? { billingEnabled: clinic.billingEnabled } : {}), ...(clinic.billing ? { billing: clinic.billing } : {}), ...(clinic.autoLockMinutes !== undefined ? { autoLockMinutes: clinic.autoLockMinutes } : {}), ...(clinic.closedDates ? { closedDates: clinic.closedDates } : {}) }).then(() => toast.success('Clinic settings saved')).catch(e => toast.error(e.message));
   }
   function savePad(rxPad: RxPad, doctors: Doctor[]) {
     w.repo.saveClinic({ ...clinic, rxPad, doctors }).then(() => toast.success('Prescription pad saved')).catch(e => toast.error(e.message));
@@ -59,6 +60,7 @@ export default function SettingsView({ w, onCreateClinic, demo }: { w: Workspace
     <div className="split">
       <div className="rail">
         {w.can.editClinic && <section className="card"><ClinicForm key={clinic.id} clinic={clinic} onSave={save} /></section>}
+        {w.can.editClinic && <section className="card" id="schedule"><ScheduleSettings key={clinic.id} w={w} /></section>}
         {w.can.manageStaff && <section className="card" id="staff"><StaffSettings key={clinic.id} w={w} /></section>}
         {w.can.readAudit && <section className="card" id="activity"><ActivityLog key={clinic.id} w={w} /></section>}
         {w.can.exportData && <section className="card" id="data"><DataExport w={w} /></section>}

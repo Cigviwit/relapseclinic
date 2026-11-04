@@ -1,9 +1,9 @@
 // Booking runs here, not in the browser, so two front desks cannot take the same slot.
 const { FieldValue } = require('firebase-admin/firestore');
 const { ServiceError, resolveActor, CLINIC_ROLES } = require('./access');
+const { availabilityError } = require('./availability');
 
 const minutes = (t) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3));
-const label = (t) => `${Number(t.slice(0, 2)) % 12 || 12}:${t.slice(3)} ${Number(t.slice(0, 2)) >= 12 ? 'PM' : 'AM'}`;
 const ID = /^[A-Za-z0-9_-]{1,100}$/;
 
 /** Why this booking cannot be made, or null. Mirrors validateAppointment in lib/clinic.ts, which gives the same answer before the form is sent. */
@@ -11,7 +11,8 @@ function bookingError(clinic, patient, a, others) {
   if (!clinic || !patient || patient.clinicId !== clinic.id || !clinic.doctors.some((d) => d.id === a.doctorId)) return 'Choose a patient and doctor from this clinic.';
   if (!/^\d{4}-\d{2}-\d{2}$/.test(a.date) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(a.time) || !Number.isInteger(a.duration) || a.duration < 5 || a.duration > 240) return 'Enter a valid date, time, and duration from 5 to 240 minutes.';
   const start = minutes(a.time), end = start + a.duration;
-  if (start < minutes(clinic.opens) || end > minutes(clinic.closes)) return `Appointments must fit within clinic hours: ${label(clinic.opens)}–${label(clinic.closes)}.`;
+  const unavailable = availabilityError(clinic, a.doctorId, a.date, a.time, a.duration);
+  if (unavailable) return unavailable;
   const clash = others.some((b) => b.id !== a.id && b.clinicId === a.clinicId && b.doctorId === a.doctorId && b.date === a.date && b.status !== 'cancelled' && start < minutes(b.time) + b.duration && end > minutes(b.time));
   return clash ? 'This doctor already has an appointment at that time. Choose another slot.' : null;
 }

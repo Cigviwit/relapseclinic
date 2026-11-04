@@ -21,6 +21,7 @@ function dayTotals(date, bills, entries) {
 }
 
 async function closeDay(db, auth, input) {
+  if (!auth?.uid) throw new ServiceError('unauthenticated', 'Sign in to close the day.');
   const { clinicId, date, countedCash, note } = input || {};
   if (typeof clinicId !== 'string' || !/^[A-Za-z0-9_-]{1,100}$/.test(clinicId) || typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new ServiceError('invalid-argument', 'A clinic and date are required.');
   if (!Number.isInteger(countedCash) || countedCash < 0 || countedCash > MAX_AMOUNT) throw new ServiceError('invalid-argument', 'Enter the cash counted.');

@@ -180,6 +180,13 @@ test('a failed owner login does not leave a clinic behind', async () => {
   assert.equal((await db.doc('clinics/clinic4').get()).exists, false);
 });
 
+test('signed-out callers are refused before anything is looked up', async () => {
+  await refused(createStaff(db, auth, undefined, newStaff({ clinicId: 'no-such-clinic' })), 'unauthenticated');
+  await refused(updateStaff(db, auth, undefined, { uid: 'no-such-person' }), 'unauthenticated');
+  await refused(staffSetupLink(db, auth, undefined, { uid: 'no-such-person' }), 'unauthenticated');
+  await refused(closeDay(db, undefined, {}), 'unauthenticated');
+});
+
 // --- PDF retention ---
 test('expired PDFs are removed from storage and the database; fresh ones stay', async () => {
   const now = Date.UTC(2026, 10, 5);

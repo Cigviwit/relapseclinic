@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ChevronLeft, ChevronRight, Plus } from 'lucide-react';
 import { addDays, clockLabel, dateLabel, minutes, type Appointment } from '@/lib/clinic';
+import { doctorDay } from '@/lib/availability';
 import { Chips } from '../kit';
 import { DoctorFilter } from './today-view';
 import type { Workspace } from './types';
@@ -36,6 +37,15 @@ export default function ScheduleView({ w, date, setDate }: { w: Workspace; date:
   const rangeTo = view === 'month' ? monthEnd : view === 'week' ? week[6] : date;
   const { loadRange } = w;
   useEffect(() => { loadRange(rangeFrom, rangeTo); }, [loadRange, rangeFrom, rangeTo]);
+
+  // The stretches of the day a doctor is not working, shaded on the grid.
+  const offBlocks = (doctorId: string) => {
+    const gaps: [number, number][] = [];
+    let at = open;
+    for (const s of doctorDay(clinic, doctorId, date).sessions) { if (minutes(s.start) > at) gaps.push([at, minutes(s.start)]); at = Math.max(at, minutes(s.end)); }
+    if (at < close) gaps.push([at, close]);
+    return gaps;
+  };
 
   const block = (a: Appointment) => {
     const p = w.patient(a.patientId);
@@ -80,7 +90,7 @@ export default function ScheduleView({ w, date, setDate }: { w: Workspace; date:
     </div>}
 
     {view === 'day' && <div className="daygrid card card-flush">
-      <div className="dg-head" style={{ gridTemplateColumns: `56px repeat(${doctors.length}, minmax(160px, 1fr))` }}><span />{doctors.map(d => <div key={d.id} className="dg-doc"><strong>{d.name}</strong><small>{d.specialty} · {on(date).filter(a => a.doctorId === d.id).length} booked</small></div>)}</div>
+      <div className="dg-head" style={{ gridTemplateColumns: `56px repeat(${doctors.length}, minmax(160px, 1fr))` }}><span />{doctors.map(d => <div key={d.id} className="dg-doc"><strong>{d.name}</strong><small>{d.specialty} · {on(date).filter(a => a.doctorId === d.id).length} booked</small>{doctorDay(clinic, d.id, date).off && <small className="text-danger">{doctorDay(clinic, d.id, date).off}</small>}</div>)}</div>
       <div className="dg-body" style={{ gridTemplateColumns: `56px repeat(${doctors.length}, minmax(160px, 1fr))`, height: (close - startHour) * PX + 8 }}>
         <div className="dg-hours">{Array.from({ length: Math.ceil((close - startHour) / 60) + 1 }, (_, i) => startHour + i * 60).filter(m => m <= close).map(m => <span key={m} style={{ top: (m - startHour) * PX }}>{clockLabel(hhmm(m)).replace(':00', '')}</span>)}</div>
         {doctors.map(d => <div key={d.id} className="dg-col" style={{ backgroundSize: `100% ${30 * PX}px`, backgroundPositionY: `${(startHour % 30) * PX}px` }}
@@ -88,10 +98,12 @@ export default function ScheduleView({ w, date, setDate }: { w: Workspace; date:
             const y = e.clientY - e.currentTarget.getBoundingClientRect().top;
             const t = Math.floor((y / PX + startHour) / 15) * 15;
             if (t < open || t >= close) return;
+            if (!doctorDay(clinic, d.id, date).sessions.some(s => t >= minutes(s.start) && t < minutes(s.end))) return;
             if (date < now.date || (date === now.date && t < nowMin)) return;
             w.book({ date, doctorId: d.id, time: hhmm(t) });
           }}>
           {open > startHour && <div className="dg-closed" style={{ top: 0, height: (open - startHour) * PX }} />}
+          {offBlocks(d.id).map(([from, to]) => <div key={from} className="dg-closed" style={{ top: (from - startHour) * PX, height: (to - from) * PX }} />)}
           {on(date).filter(a => a.doctorId === d.id).map(block)}
         </div>)}
         {date === now.date && nowMin >= startHour && nowMin <= close && <div className="dg-now" style={{ top: (nowMin - startHour) * PX }}><span>{clockLabel(now.time)}</span></div>}

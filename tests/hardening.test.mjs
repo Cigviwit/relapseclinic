@@ -8,6 +8,8 @@ import { plainValue, toCsv } from '../lib/csv.ts';
 import { addDays, seed, validateAppointment } from '../lib/clinic.ts';
 import { amendPrescription, blankPrescription, cleanPrescription, currentPrescriptions, repeatPrescription, withDefaults } from '../lib/prescription.ts';
 import { daySummary } from '../lib/billing.ts';
+import { availabilityError, cleanWeekly, doctorDay, strandedVisits } from '../lib/availability.ts';
+import { freeSlots } from '../lib/schedule.ts';
 
 const require = createRequire(import.meta.url);
 const { bookingError } = require('../functions/booking-logic.js');
@@ -131,6 +133,41 @@ test('repeating a final prescription starts a separate draft that does not repla
   assert.deepEqual([repeated.status, repeated.amends, repeated.finalizedBy], ['draft', undefined, undefined]);
 });
 
+// --- Doctor schedules ---
+const weeklyClinic = { id: 'c1', opens: '09:00', closes: '21:00', timezone: 'Asia/Kolkata', closedDates: [{ date: '2026-11-24', reason: 'Diwali' }], doctors: [
+  { id: 'd1', name: 'Dr A', specialty: '', weekly: { 2: [{ start: '09:00', end: '13:00' }, { start: '17:00', end: '20:00' }] }, leave: [{ id: 'l', from: '2026-11-17', to: '2026-11-18', reason: 'conference' }] },
+  { id: 'd2', name: 'Dr B', specialty: '' },
+] };
+const later = new Date('2026-01-01T00:00:00Z');
+
+test('a doctor with no hours of their own follows the clinic every day', () => {
+  assert.deepEqual(doctorDay(weeklyClinic, 'd2', '2026-11-11'), { sessions: [{ start: '09:00', end: '21:00' }] });
+  assert.equal(availabilityError(weeklyClinic, 'd2', '2026-11-11', '08:30', 30), 'Appointments must fit within clinic hours: 9:00 AM–9:00 PM.');
+});
+
+test('free slots skip the gap between sessions, days off, leave and holidays', () => {
+  const slots = freeSlots([], weeklyClinic, 'd1', '2026-11-10', 30, undefined, 30, later);
+  assert.ok(slots.includes('09:00') && slots.includes('12:30') && slots.includes('17:00') && slots.includes('19:30'));
+  assert.ok(!slots.includes('13:00') && !slots.includes('16:30') && !slots.includes('20:00'));
+  assert.deepEqual(freeSlots([], weeklyClinic, 'd1', '2026-11-11', 30, undefined, 30, later), [], 'not a working day');
+  assert.deepEqual(freeSlots([], weeklyClinic, 'd1', '2026-11-17', 30, undefined, 30, later), [], 'on leave');
+  assert.deepEqual(freeSlots([], weeklyClinic, 'd2', '2026-11-24', 30, undefined, 30, later), [], 'clinic closed');
+});
+
+test('weekly hours are checked and put in order before saving', () => {
+  const session = (start, end) => ({ start, end });
+  assert.deepEqual(cleanWeekly({ 1: [session('17:00', '20:00'), session('09:00', '13:00')] }, '09:00', '21:00')[1].map(s => s.start), ['09:00', '17:00']);
+  assert.throws(() => cleanWeekly({ 1: [session('12:00', '10:00')] }, '09:00', '21:00'), /must end after/);
+  assert.throws(() => cleanWeekly({ 1: [session('08:00', '10:00')] }, '09:00', '21:00'), /within clinic hours/);
+  assert.throws(() => cleanWeekly({ 1: [session('09:00', '13:00'), session('12:00', '14:00')] }, '09:00', '21:00'), /cannot overlap/);
+});
+
+test('booked visits left outside new hours are reported, not moved', () => {
+  const base = { clinicId: 'c1', patientId: 'p', doctorId: 'd1', duration: 30, reason: 'x', status: 'scheduled' };
+  const list = [{ ...base, id: 'ok', date: '2026-11-10', time: '09:00' }, { ...base, id: 'gap', date: '2026-11-10', time: '14:00' }, { ...base, id: 'leave', date: '2026-11-17', time: '09:00' }, { ...base, id: 'past', date: '2026-10-01', time: '14:00' }, { ...base, id: 'done', date: '2026-11-10', time: '14:00', status: 'cancelled' }];
+  assert.deepEqual(strandedVisits(list, weeklyClinic, '2026-11-05').map(a => a.id), ['gap', 'leave']);
+});
+
 // --- Browser and server must agree ---
 test('the browser check and the server check agree on every booking', () => {
   const c = { id: 'c1', name: 'x', address: 'x', phone: '+911234567890', timezone: 'Asia/Kolkata', opens: '09:00', closes: '19:00', doctors: [{ id: 'd1', name: 'A', specialty: '' }, { id: 'd2', name: 'B', specialty: '' }] };
@@ -138,12 +175,16 @@ test('the browser check and the server check agree on every booking', () => {
   const base = { id: 'n', clinicId: 'c1', patientId: 'p1', doctorId: 'd1', date: '2026-11-10', time: '10:00', duration: 30, reason: 'x', status: 'scheduled' };
   const existing = [{ ...base, id: 'e1', time: '11:00' }, { ...base, id: 'e2', time: '14:00', status: 'cancelled' }, { ...base, id: 'e3', time: '15:00', status: 'missed' }, { ...base, id: 'e4', time: '16:00', status: 'completed' }, { ...base, id: 'e5', doctorId: 'd2', time: '10:00' }, { ...base, id: 'e6', date: '2026-11-11' }];
   const shapes = [{}, { time: '10:45' }, { time: '11:15' }, { time: '11:30' }, { time: '14:00' }, { time: '15:15' }, { time: '16:15' }, { time: '08:45' }, { time: '18:45' }, { time: '18:30' }, { time: '09:00' }, { doctorId: 'd2' }, { doctorId: 'nope' }, { patientId: 'p2' }, { patientId: 'gone' }, { duration: 4 }, { duration: 241 }, { duration: 7.5 }, { date: 'nope' }, { time: '25:00' }, { id: 'e1', time: '11:15' }, { id: 'e1' }];
-  const appointmentDb = { clinics: [c], patients, appointments: existing };
-  for (const shape of shapes) {
-    const a = { ...base, ...shape };
-    let browser = null;
-    try { validateAppointment(appointmentDb, a); } catch (e) { browser = e.message; }
-    assert.equal(bookingError(c, patients.find(p => p.id === a.patientId), a, existing), browser, JSON.stringify(shape));
+  const scheduled = { ...c, closedDates: [{ date: '2026-11-12', reason: 'Diwali' }], doctors: [{ ...c.doctors[0], weekly: { 2: [{ start: '09:00', end: '13:00' }, { start: '17:00', end: '20:00' }], 3: [{ start: '09:00', end: '12:00' }] }, leave: [{ id: 'l', from: '2026-11-17', to: '2026-11-18', reason: 'conference' }] }, c.doctors[1]] };
+  const moreShapes = [...shapes, { time: '13:15' }, { time: '12:45' }, { time: '17:00' }, { date: '2026-11-11', time: '09:00' }, { date: '2026-11-11', time: '14:00' }, { date: '2026-11-13', time: '10:00' }, { date: '2026-11-12', time: '10:00' }, { date: '2026-11-17', time: '10:00' }];
+  for (const clinicUnderTest of [c, scheduled]) {
+    const appointmentDb = { clinics: [clinicUnderTest], patients, appointments: existing };
+    for (const shape of moreShapes) {
+      const a = { ...base, ...shape };
+      let browser = null;
+      try { validateAppointment(appointmentDb, a); } catch (e) { browser = e.message; }
+      assert.equal(bookingError(clinicUnderTest, patients.find(p => p.id === a.patientId), a, existing), browser, JSON.stringify(shape));
+    }
   }
 });
 

@@ -31,6 +31,19 @@ test('booking refuses another clinic’s patient, an unknown doctor, and times o
   assert.match(bookingError(clinic, patient, visit({ duration: 3 }), []), /duration/);
 });
 
+test('booking follows doctor sessions, leave and clinic holidays', () => {
+  const weekly = { 2: [{ start: '09:00', end: '13:00' }, { start: '17:00', end: '20:00' }] };
+  const c = { id: 'c1', opens: '09:00', closes: '21:00', doctors: [{ id: 'd1', name: 'Dr A', weekly, leave: [{ id: 'l', from: '2026-11-17', to: '2026-11-18', reason: 'conference' }] }], closedDates: [{ date: '2026-11-24', reason: 'Diwali' }] };
+  const at = (date, time, duration = 30) => bookingError(c, patient, visit({ date, time, duration }), []);
+  assert.equal(at('2026-11-10', '09:00'), null, 'Tuesday morning session');
+  assert.equal(at('2026-11-10', '17:30'), null, 'Tuesday evening session');
+  assert.match(at('2026-11-10', '13:00'), /works 9:00 AM–1:00 PM and 5:00 PM–8:00 PM/, 'the gap between sessions');
+  assert.match(at('2026-11-10', '12:45'), /works/, 'running past the end of a session');
+  assert.match(at('2026-11-11', '10:00'), /does not work on Wednesdays/);
+  assert.match(at('2026-11-17', '10:00'), /on leave \(conference\)/);
+  assert.match(at('2026-11-24', '10:00'), /closed for Diwali/);
+});
+
 test('day totals count payments, refunds and reversals on the day recorded', () => {
   const entries = [
     { date: 'D', kind: 'payment', method: 'cash', amount: 500 },
