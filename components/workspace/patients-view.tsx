@@ -20,7 +20,9 @@ export default function PatientsView({ w, selectedId, select }: { w: Workspace; 
   const sorted = useMemo(() => [...w.patients].sort((a, b) => a.name.localeCompare(b.name)), [w.patients]);
   const list = useMemo(() => searchPatients(sorted, q), [sorted, q]);
   const lastVisit = useMemo(() => { const m = new Map<string, string>(); for (const a of w.appointments) if (a.status !== 'cancelled' && a.date <= w.now.date && (m.get(a.patientId) || '') < a.date) m.set(a.patientId, a.date); return m; }, [w.appointments, w.now.date]);
-  const p = selectedId ? w.patient(selectedId) : undefined;
+  // An old link to a merged patient opens the patient they were merged into.
+  const selected = selectedId ? w.patient(selectedId) : undefined;
+  const p = selected?.mergedInto ? w.patient(selected.mergedInto) : selected;
 
   return <div className={'page page-split' + (p ? ' has-detail' : '')}>
     <section className="pl card card-flush">

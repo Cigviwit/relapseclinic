@@ -48,6 +48,7 @@ A restore creates a **new database**. It never overwrites the live one, so a fai
 | Data | Kept | Removed by |
 |---|---|---|
 | Patients, records, notes, prescriptions, bills, payments | Indefinitely | Nothing. Needs a clinic retention policy before the launch phase |
+| Patient documents and X-rays | Indefinitely, including those removed from view | Nothing. Needs a clinic retention policy before the launch phase |
 | Sent prescription PDFs | 30 days | `purgePrescriptionFiles`, daily. The prescription itself stays and can be printed again |
 | Activity log | Indefinitely | Nothing yet |
 | Firestore backups | 14 weeks | The backup schedule |

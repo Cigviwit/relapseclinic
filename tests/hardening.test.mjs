@@ -9,7 +9,7 @@ import { addDays, seed, validateAppointment } from '../lib/clinic.ts';
 import { allergyConflicts, unreviewedConflicts } from '../lib/allergy-check.ts';
 import { addCatalogMedicine, applyTemplate, emptyCatalog, templateFromRx, withCatalogDefaults } from '../lib/catalog.ts';
 import { visitNotes } from '../lib/patient-record.ts';
-import { labOverdue, monthsLater, nextLabSteps, parseTeeth, planTotals, recallsToCall, validateLabCase, validatePlan } from '../lib/dental.ts';
+import { billsForItem, labOverdue, monthsLater, nextLabSteps, parseTeeth, planTotals, recallsToCall, validateLabCase, validatePlan } from '../lib/dental.ts';
 import { amendPrescription, blankPrescription, cleanPrescription, currentPrescriptions, repeatPrescription, withDefaults } from '../lib/prescription.ts';
 import { daySummary } from '../lib/billing.ts';
 import { availabilityError, cleanWeekly, doctorDay, strandedVisits } from '../lib/availability.ts';
@@ -178,10 +178,10 @@ test('booked visits left outside new hours are reported, not moved', () => {
 test('tokens follow arrival order and do not change as people leave', () => {
   const visit = (id, arrivedAt, over = {}) => ({ id, date: 'D', status: 'scheduled', stage: 'arrived', arrivedAt, ...over });
   const list = [visit('c', '09:30'), visit('a', '09:00', { status: 'completed' }), visit('b', '09:10', { stage: 'with_doctor' }), visit('x', '09:05', { status: 'cancelled' }), { id: 'booked', date: 'D', status: 'scheduled' }, visit('other', '09:00', { date: 'E' })];
-  assert.deepEqual([...dayTokens(list, 'D')], [['a', 1], ['b', 2], ['c', 3]]);
+  assert.deepEqual([...dayTokens(list, 'D')], [['a', 1], ['x', 2], ['b', 3], ['c', 4]], 'a cancelled arrival keeps its number');
   const { waiting, withDoctor } = clinicQueue(list, 'D');
-  assert.deepEqual(waiting.map(e => [e.appointment.id, e.token]), [['c', 3]]);
-  assert.deepEqual(withDoctor.map(e => [e.appointment.id, e.token]), [['b', 2]]);
+  assert.deepEqual(waiting.map(e => [e.appointment.id, e.token]), [['c', 4]]);
+  assert.deepEqual(withDoctor.map(e => [e.appointment.id, e.token]), [['b', 3]]);
 });
 
 test('waiting time is whole minutes and never negative', () => {
@@ -235,6 +235,13 @@ test('an allergy is caught by the exact medicine, its family and common Indian b
   assert.equal(allergyConflicts(names('Tab Ibuprofen 400'), [allergy('Ibuprofen')])[0].strength, 'same');
   assert.deepEqual(allergyConflicts(names('Tab Combiflam'), [allergy('Aspirin')]).map(c => c.strength), ['group'], 'Combiflam contains an NSAID');
   assert.deepEqual(allergyConflicts(names('Tab Combiflam'), [allergy('Paracetamol')]).map(c => c.strength), ['group'], 'and paracetamol');
+});
+
+test('brand names are caught however the strength is written', () => {
+  for (const name of ['Tab Dolo-650', 'Tab Dolo650', 'Tab Dolo 650', 'TAB DOLO-650MG']) assert.equal(allergyConflicts(names(name), [allergy('Paracetamol')]).length, 1, name);
+  for (const name of ['Cap Mox-500', 'Cap Mox 500', 'Tab Moxikind-CV 625']) assert.equal(allergyConflicts(names(name), [allergy('Penicillin')]).length, 1, name);
+  assert.equal(allergyConflicts(names('Tab Zerodol-P'), [allergy('Painkillers')]).length, 1);
+  assert.equal(allergyConflicts(names('Tab Nise-100'), [allergy('NSAIDs')]).length, 1);
 });
 
 test('penicillin and cephalosporin allergies warn about possible cross-reaction', () => {
@@ -308,6 +315,12 @@ test('tooth numbers must be real FDI teeth', () => {
 test('plan totals leave out declined treatment', () => {
   const item = (estimate, status) => ({ id: String(estimate), procedure: 'x', teeth: [], estimate, status });
   assert.deepEqual(planTotals([item(100, 'done'), item(200, 'planned'), item(400, 'declined'), item(800, 'in_progress')]), { total: 1100, done: 100, count: 3, finished: 1 });
+});
+
+test('a plan item finds bills that already charged for it, ignoring voided ones and other patients', () => {
+  const bill = (id, patientId, description, status = 'active') => ({ id, patientId, status, lines: [{ description }] });
+  const bills = [bill('a', 'p', ' zirconia crown '), bill('b', 'p', 'Zirconia crown', 'void'), bill('c', 'q', 'Zirconia crown'), bill('d', 'p', 'Scaling')];
+  assert.deepEqual(billsForItem(bills, 'p', 'Zirconia Crown').map(b => b.id), ['a']);
 });
 
 test('a plan needs a doctor, a patient and named treatments', () => {

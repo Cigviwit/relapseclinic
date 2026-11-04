@@ -22,6 +22,10 @@ export function planTotals(items: PlanItem[]) {
   return { total: live.reduce((sum, i) => sum + i.estimate, 0), done: live.filter(i => i.status === 'done').reduce((sum, i) => sum + i.estimate, 0), count: live.length, finished: live.filter(i => i.status === 'done').length };
 }
 
+/** Active bills that already charged for this treatment. A root canal billed per sitting has several, so this warns rather than refuses. */
+export const billsForItem = <B extends { patientId: string; status: string; lines: { description: string }[] }>(bills: B[], patientId: string, procedure: string) =>
+  bills.filter(b => b.patientId === patientId && b.status === 'active' && b.lines.some(l => l.description.trim().toLowerCase() === procedure.trim().toLowerCase()));
+
 export function validatePlan(plan: TreatmentPlan) {
   if (!plan.patientId) throw new Error('Choose the patient first.');
   if (!plan.doctorId) throw new Error('Choose the doctor.');

@@ -4,6 +4,7 @@ import { type Clinic, type Patient, type Appointment, type Database, addDays, cl
 import { patientLanguages, patientLanguage, type PatientLanguage } from '@/lib/patient-language';
 import { freeSlots } from '@/lib/schedule';
 import { possibleDuplicates } from '@/lib/front-desk';
+import { doctorDay } from '@/lib/availability';
 import { Chips, Field, FormError, Select } from './kit';
 import { PatientPicker } from './patient-picker';
 
@@ -53,7 +54,7 @@ export function AppointmentForm({ db, clinic, date, appointment, patientId, doct
     <div className="field"><span className="field-label">Time <button type="button" className="btn-link" onClick={() => setManualTime(m => !m)}>{manualTime ? 'Show free slots' : 'Type a time'}</button></span>
       {manualTime ? <input className="input" type="time" required value={a.time} onChange={e => change({ time: e.target.value })} />
         : slots.length ? <div className="slots">{slotGroups.map(([label, test]) => { const list = slots.filter(test); return list.length ? <div key={label} className="slot-group"><small>{label}</small><div className="slot-chips">{list.map(t => <button type="button" key={t} className={'slot' + (a.time === t ? ' on' : '')} onClick={() => change({ time: t })}>{clockLabel(t)}</button>)}</div></div> : null; })}</div>
-          : <p className="note">No free {a.duration}-minute slots for this doctor on this day. Try another date or a shorter length.</p>}
+          : <p className="note">{doctorDay(clinic, a.doctorId, a.date).off ? `${doctorDay(clinic, a.doctorId, a.date).off} Try another date.` : `No free ${a.duration}-minute slots for this doctor on this day. Try another date or a shorter length.`}</p>}
       {appointment && a.time && !slots.includes(a.time) && !manualTime && <span className="field-hint">Current time: {clockLabel(a.time)}</span>}
     </div>
     <Field label="Visit type"><div className="chips chips-sm">{visitTypes.map(v => <button type="button" key={v} className={'chip' + (a.reason === v ? ' on' : '')} onClick={() => change({ reason: v })}>{v}</button>)}</div>

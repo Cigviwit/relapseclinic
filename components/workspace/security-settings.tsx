@@ -53,9 +53,9 @@ export function DataExport({ w }: { w: Workspace }) {
   }
   return <>
     <h2 className="card-title"><Download size={16} />Your data</h2>
-    <p className="muted">This data belongs to your clinic. Downloads contain patient information, so store them carefully. The full download is recorded in the activity log.</p>
+    <p className="muted">This data belongs to your clinic. Downloads contain patient information, so store them carefully. The full download is recorded in the activity log. It lists X-rays and documents but does not include the files themselves: open those from each patient’s page.</p>
     <div className="row-tight wrap">
-      <button type="button" className="btn btn-soft" disabled={!!busy} onClick={() => void everything()}><Download size={15} />{busy || 'Download everything'}</button>
+      <button type="button" className="btn btn-soft" disabled={!!busy} onClick={() => void everything()}><Download size={15} />{busy || 'Download all records'}</button>
       <button type="button" className="btn btn-ghost" onClick={patients}>Patients (CSV)</button>
       {w.billingOn && <button type="button" className="btn btn-ghost" onClick={payments}>Payments (CSV)</button>}
     </div>

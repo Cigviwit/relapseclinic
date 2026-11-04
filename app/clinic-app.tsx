@@ -256,7 +256,9 @@ export default function ClinicApp() {
   }
 
   const w: Workspace = {
-    account, db, clinic, repo, now, doctorFilter, setDoctorFilter, can, rxOn, loadRange, waitlist, catalog: savedCatalog || emptyCatalog(clinic.id), recalls, openLabs,
+    account, db, clinic, repo, now, doctorFilter, setDoctorFilter, can, rxOn, loadRange,
+    waitlist: waitlist.filter(e => e.clinicId === clinic.id), recalls: recalls.filter(r => r.clinicId === clinic.id), openLabs: openLabs.filter(c => c.clinicId === clinic.id),
+    catalog: savedCatalog?.clinicId === clinic.id ? savedCatalog : emptyCatalog(clinic.id),
     patients: scoped.patients, appointments: scoped.appointments, deliveries: scoped.deliveries, digests: scoped.digests, prescriptions: scoped.prescriptions,
     patient: id => scoped.byId.get(id), doctor: id => scoped.doctors.get(id), doctorName: id => scoped.doctors.get(id)?.name || 'Doctor',
     go, book: o => { setDetail(null); setBooking(o || {}); }, openAppointment: setDetail,

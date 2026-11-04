@@ -251,6 +251,8 @@ export const firestoreRepository: Repository = {
       }
       out[name] = items;
     }
+    const catalog = await getDoc(doc(firestore, "clinicCatalogs", clinicId));
+    out.clinicCatalogs = catalog.exists() ? [plainValue(catalog.data())] : [];
     return out;
   },
 };

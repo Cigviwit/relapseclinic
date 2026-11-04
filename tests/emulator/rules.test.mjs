@@ -162,6 +162,13 @@ test('family links survive on the patient, and a browser cannot mark a patient m
   await assertFails(setDoc(doc(as('owner'), 'patients', 'p8'), patient('owner', { id: 'p8', mergedInto: 'p1' })));
 });
 
+test('a merged patient cannot be saved, so a merge cannot be undone by accident', async () => {
+  await env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), 'patients', 'merged'), { id: 'merged', clinicId: C, name: 'Old', phone: '+911234567893', consent: true, mergedInto: 'p1' }));
+  await assertFails(setDoc(doc(as('owner'), 'patients', 'merged'), patient('owner', { id: 'merged' })));
+  await assertFails(updateDoc(doc(as('owner'), 'patients', 'merged'), { familyId: 'f', updatedBy: 'owner', updatedAt: serverTimestamp() }));
+  await assertSucceeds(getDoc(doc(as('owner'), 'patients', 'merged')));
+});
+
 // --- Waitlist ---
 const waiting = (who, over = {}) => ({ id: 'w9', clinicId: C, patientId: 'p1', doctorId: '', status: 'waiting', createdAt: 'now', updatedBy: who, updatedAt: serverTimestamp(), ...over });
 

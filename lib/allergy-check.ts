@@ -8,7 +8,7 @@ type Group = { name: string; terms: string[]; related?: string };
 const groups: Group[] = [
   { name: 'penicillins', related: 'cephalosporins', terms: ['penicillin', 'amoxicillin', 'amoxycillin', 'amoxy', 'ampicillin', 'cloxacillin', 'flucloxacillin', 'dicloxacillin', 'piperacillin', 'clavulan', 'augmentin', 'clavam', 'moxikind', 'novamox', 'mox', 'amox', 'moxclav', 'megaclox'] },
   { name: 'cephalosporins', related: 'penicillins', terms: ['cephalosporin', 'cephalexin', 'cefalexin', 'cefixime', 'cefuroxime', 'cefadroxil', 'cefpodoxime', 'ceftriaxone', 'cefdinir', 'taxim', 'zifi', 'phexin'] },
-  { name: 'NSAIDs (anti-inflammatory painkillers)', terms: ['nsaid', 'ibuprofen', 'diclofenac', 'aceclofenac', 'ketorolac', 'naproxen', 'nimesulide', 'aspirin', 'mefenamic', 'etoricoxib', 'piroxicam', 'brufen', 'ibugesic', 'combiflam', 'voveran', 'zerodol', 'hifenac', 'ketorol', 'dolokind', 'nise', 'meftal', 'ecosprin', 'disprin'] },
+  { name: 'NSAIDs (anti-inflammatory painkillers)', terms: ['nsaid', 'nsaids', 'painkiller', 'painkillers', 'ibuprofen', 'diclofenac', 'aceclofenac', 'ketorolac', 'naproxen', 'nimesulide', 'aspirin', 'mefenamic', 'etoricoxib', 'piroxicam', 'brufen', 'ibugesic', 'combiflam', 'voveran', 'zerodol', 'hifenac', 'ketorol', 'dolokind', 'nise', 'meftal', 'ecosprin', 'disprin'] },
   { name: 'paracetamol', terms: ['paracetamol', 'acetaminophen', 'dolo', 'crocin', 'calpol', 'combiflam', 'zerodol-p', 'dolokind-plus'] },
   { name: 'macrolides', terms: ['macrolide', 'azithromycin', 'erythromycin', 'clarithromycin', 'roxithromycin', 'azithral', 'azee'] },
   { name: 'sulfa medicines', terms: ['sulfa', 'sulpha', 'sulfonamide', 'sulfamethoxazole', 'cotrimoxazole', 'co-trimoxazole', 'septran', 'bactrim'] },
@@ -20,7 +20,8 @@ const groups: Group[] = [
   { name: 'opioid painkillers', terms: ['opioid', 'tramadol', 'codeine', 'ultracet', 'tramazac'] },
 ];
 
-const words = (text: string) => text.toLowerCase().match(/[a-z0-9-]+/g) || [];
+/** "Dolo-650" and "Dolo650" are both also read as "dolo": strengths are usually written straight onto the name. */
+const words = (text: string) => (text.toLowerCase().match(/[a-z0-9-]+/g) || []).flatMap(w => [w, ...w.split('-'), w.replace(/[-\d]+$/, '')]).filter(Boolean);
 const mentions = (text: string, term: string) => words(text).some(w => w === term || (term.length >= 5 && w.startsWith(term)));
 const groupsOf = (text: string) => groups.filter(g => g.terms.some(t => mentions(text, t)));
 /** "Penicillin" as a whole word, or "amoxicillin" when the allergy says "amoxicillin 500". Too-short words are ignored. */

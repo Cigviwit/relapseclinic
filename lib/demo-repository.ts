@@ -259,7 +259,7 @@ export function createDemoRepository(): Repository {
     exportClinicData: async clinicId => {
       log({ collection: 'clinics', docId: clinicId, action: 'export', fields: [] });
       emit();
-      return { patients: inClinic(state.db.patients, clinicId), appointments: inClinic(state.db.appointments, clinicId), patientRecords: inClinic(state.records, clinicId), patientNotes: inClinic(state.notes, clinicId), prescriptions: inClinic(state.prescriptions, clinicId), bills: inClinic(state.bills, clinicId), ledgerEntries: inClinic(state.ledger, clinicId), dayClosings: inClinic(state.closings, clinicId) };
+      return { patients: inClinic(state.db.patients, clinicId), appointments: inClinic(state.db.appointments, clinicId), patientRecords: inClinic(state.records, clinicId), patientNotes: inClinic(state.notes, clinicId), prescriptions: inClinic(state.prescriptions, clinicId), bills: inClinic(state.bills, clinicId), ledgerEntries: inClinic(state.ledger, clinicId), dayClosings: inClinic(state.closings, clinicId), clinicCatalogs: [state.catalog] };
     },
   };
 }

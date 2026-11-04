@@ -66,6 +66,7 @@ test('merging records combines history and prefers the kept record for single va
 
 test('moving records in a merge writes one log entry, not one per record', () => {
   assert.equal(auditEntry('bills', 'b', { clinicId: 'c', patientId: 'old' }, { clinicId: 'c', patientId: 'new', mergedFrom: 'old' }), null);
+  assert.deepEqual(auditEntry('appointments', 'a', { clinicId: 'c', patientId: 'new', mergedFrom: 'old', time: '10:00' }, { clinicId: 'c', patientId: 'new', time: '11:00', updatedBy: 'u' }).fields, ['mergedFrom', 'time'], 'a reschedule that drops the marker is still logged');
   assert.equal(auditEntry('bills', 'b', { clinicId: 'c', patientId: 'new', mergedFrom: 'old', note: '' }, { clinicId: 'c', patientId: 'new', mergedFrom: 'old', note: 'x' }).action, 'update', 'later changes are still logged');
 });
 

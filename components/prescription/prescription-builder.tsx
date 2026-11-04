@@ -82,6 +82,8 @@ export default function PrescriptionBuilder({ w, initial, onClose }: { w: Worksp
   /** Printing or sending a draft finalises it first, so what a patient holds always matches the record. */
   function forPatient() {
     if (!isFinal && !canWrite) throw new Error('This draft has not been finalised by the doctor yet.');
+    // A record still loading looks the same as one with no allergies, so it must not count as checked.
+    if (!isFinal && rx.patientId && w.can.readRecords && record.status !== 'ready') throw new Error('This patient’s allergies have not loaded, so the prescription cannot be finalised yet. Save the draft, or check the connection and try again.');
     if (!isFinal && unreviewed.length) throw new Error(`Review the allergy warning for ${unreviewed[0].medicine} first.`);
     return prepared('final');
   }

@@ -4,7 +4,7 @@ import { BellRing, ClipboardList, FlaskConical, IndianRupee, MessageCircle, Plus
 import { dateLabel, type Patient } from '@/lib/clinic';
 import { formatMoney, parseRupees, rupeesText } from '@/lib/billing';
 import { whatsappUrl } from '@/lib/prescription';
-import { labOverdue, labStatusLabel, labWorkTypes, monthsLater, nextLabSteps, parseTeeth, planItemStatuses, planTotals, recallMessage, recallPresets, recallsToCall, sortLabs, validateLabCase, validatePlan, type LabCase, type LabStatus, type PlanItem, type PlanItemStatus, type Recall, type TreatmentPlan } from '@/lib/dental';
+import { billsForItem, labOverdue, labStatusLabel, labWorkTypes, monthsLater, nextLabSteps, parseTeeth, planItemStatuses, planTotals, recallMessage, recallPresets, recallsToCall, sortLabs, validateLabCase, validatePlan, type LabCase, type LabStatus, type PlanItem, type PlanItemStatus, type Recall, type TreatmentPlan } from '@/lib/dental';
 import { padFor, specialties } from '@/lib/rx-templates';
 import { Avatar, Empty, Field, FormError, Modal, Select, Status } from '../kit';
 import { PatientPicker } from '../patient-picker';
@@ -64,14 +64,20 @@ function PlanCard({ w, plan }: { w: Workspace; plan: TreatmentPlan }) {
     const items = plan.items.map(i => i.id === item.id ? { ...i, status } : i);
     void save({ ...plan, items });
   };
+  const billItem = (item: PlanItem) => {
+    const bill = () => w.newBill({ patientId: plan.patientId, doctorId: plan.doctorId, reason: item.procedure, price: item.estimate });
+    const earlier = billsForItem(w.bills, plan.patientId, item.procedure);
+    if (earlier.length) w.confirm({ title: `Bill ${item.procedure} again?`, body: `It has already been billed ${earlier.length === 1 ? 'once' : `${earlier.length} times`} for this patient. Continue only if this is another sitting.`, cta: 'Make another bill', action: bill });
+    else bill();
+  };
   return <article className="plan-card">
     <div className="row-between"><strong>{plan.title}</strong><small className="muted">{totals.finished}/{totals.count} done · {formatMoney(totals.done)} of {formatMoney(totals.total)}</small></div>
     {teeth.length > 0 && <details className="note-vitals"><summary>Teeth involved: {[...teeth].sort((a, b) => a - b).join(', ')}</summary><ToothChart value={teeth} readOnly /></details>}
     <ul className="plain-list">{plan.items.map(item => <li key={item.id} className={item.status === 'declined' ? 'plan-item is-off' : 'plan-item'}>
-      <span className="plan-item-main"><strong>{item.procedure}</strong><small>{item.teeth.length ? `Tooth ${item.teeth.join(', ')} · ` : ''}{formatMoney(item.estimate)}</small></span>
+      <span className="plan-item-main"><strong>{item.procedure}</strong><small>{item.teeth.length ? `Tooth ${item.teeth.join(', ')} · ` : ''}{formatMoney(item.estimate)}{billsForItem(w.bills, plan.patientId, item.procedure).length ? ' · billed' : ''}</small></span>
       <span className="row-tight">
         {canEdit && plan.status === 'active' ? <Select label={`Status of ${item.procedure}`} className="input-sm" value={item.status} onChange={v => setItem(item, v as PlanItemStatus)} options={planItemStatuses} /> : <Status status="scheduled">{planItemStatuses.find(s => s.value === item.status)?.label}</Status>}
-        {w.billingOn && w.can.writeBilling && item.status !== 'declined' && <button type="button" className="btn-icon" title="Make a bill" aria-label={`Bill ${item.procedure}`} onClick={() => w.newBill({ patientId: plan.patientId, doctorId: plan.doctorId, reason: item.procedure, price: item.estimate })}><IndianRupee size={14} /></button>}
+        {w.billingOn && w.can.writeBilling && item.status !== 'declined' && <button type="button" className="btn-icon" title="Make a bill" aria-label={`Bill ${item.procedure}`} onClick={() => billItem(item)}><IndianRupee size={14} /></button>}
       </span>
     </li>)}</ul>
     {canEdit && <div className="form-foot"><button type="button" className="btn-link" onClick={() => void save({ ...plan, status: plan.status === 'active' ? 'closed' : 'active' })}>{plan.status === 'active' ? 'Close plan' : 'Reopen plan'}</button></div>}

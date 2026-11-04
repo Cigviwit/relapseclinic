@@ -9,7 +9,8 @@ export type VisitStage = 'arrived' | 'with_doctor';
 export type QueueEntry = { appointment: Appointment; token: number };
 
 export function dayTokens(appointments: Appointment[], date: string) {
-  const arrived = appointments.filter(a => a.date === date && a.arrivedAt && a.status !== 'cancelled')
+  // Cancelled visits keep their place: someone leaving must not renumber everyone after them.
+  const arrived = appointments.filter(a => a.date === date && a.arrivedAt)
     .sort((a, b) => a.arrivedAt!.localeCompare(b.arrivedAt!) || a.id.localeCompare(b.id));
   return new Map(arrived.map((a, i) => [a.id, i + 1]));
 }

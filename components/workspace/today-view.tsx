@@ -26,7 +26,11 @@ export default function TodayView({ w }: { w: Workspace }) {
   const issues = w.deliveries.filter(d => d.status === 'failed' || d.status === 'unknown');
   const rxFor = (a: Appointment) => w.prescriptions.find(rx => rx.appointmentId === a.id);
   const billFor = (a: Appointment) => w.bills.find(x => x.appointmentId === a.id && x.status === 'active');
-  const queue = useMemo(() => clinicQueue(appointments.filter(mine), now.date), [appointments, now.date, doctorFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Numbered across the whole clinic, then filtered, so a patient has one token whichever doctor is selected.
+  const queue = useMemo(() => {
+    const all = clinicQueue(appointments, now.date);
+    return { waiting: all.waiting.filter(e => mine(e.appointment)), withDoctor: all.withDoctor.filter(e => mine(e.appointment)) };
+  }, [appointments, now.date, doctorFilter]); // eslint-disable-line react-hooks/exhaustive-deps
   const tokens = useMemo(() => dayTokens(appointments, now.date), [appointments, now.date]);
   const nowMs = new Date().getTime();
   // Someone in the waiting room comes before a booking whose time has merely arrived.

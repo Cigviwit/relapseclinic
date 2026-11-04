@@ -216,7 +216,8 @@ service cloud.firestore {
     match /patients/{id} {
       allow get, list: if canAccess(resource.data.clinicId);
       allow create: if canAccess(request.resource.data.clinicId) && validPatient(request.resource.data, id);
-      allow update: if canAccess(resource.data.clinicId) && sameClinic() && validPatient(request.resource.data, id);
+      // A merged patient is closed: saving one would drop the merge and bring the duplicate back.
+      allow update: if canAccess(resource.data.clinicId) && sameClinic() && validPatient(request.resource.data, id) && !('mergedInto' in resource.data);
       allow delete: if false;
     }
     match /appointments/{id} {

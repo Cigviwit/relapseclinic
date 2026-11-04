@@ -16,7 +16,7 @@ function actorOf(after) {
 /** The log entry for one write, or null if nothing a person did changed. */
 function auditEntry(collection, docId, before, after) {
   // A merge moves many records at once and writes one log entry for all of them.
-  if (before && after && before.mergedFrom !== after.mergedFrom) return null;
+  if (before && after?.mergedFrom && before.mergedFrom !== after.mergedFrom) return null;
   const action = !before ? 'create' : !after ? 'delete' : 'update';
   const fields = action === 'update' ? changedFields(before, after) : [];
   if (action === 'update' && !fields.length) return null;
