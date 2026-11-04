@@ -157,6 +157,26 @@ test('patient saves are stamped with who saved them', async () => {
   await assertFails(setDoc(doc(as('frontdesk'), 'patients', 'p7'), { id: 'p7', clinicId: C, name: 'No stamp', phone: '+911234567891', consent: true }));
 });
 
+test('family links survive on the patient, and a browser cannot mark a patient merged', async () => {
+  await assertSucceeds(setDoc(doc(as('frontdesk'), 'patients', 'p9'), patient('frontdesk', { familyId: 'f1' })));
+  await assertFails(setDoc(doc(as('owner'), 'patients', 'p8'), patient('owner', { id: 'p8', mergedInto: 'p1' })));
+});
+
+// --- Waitlist ---
+const waiting = (who, over = {}) => ({ id: 'w9', clinicId: C, patientId: 'p1', doctorId: '', status: 'waiting', createdAt: 'now', updatedBy: who, updatedAt: serverTimestamp(), ...over });
+
+test('staff keep the waitlist, and entries can only move on, never be erased', async () => {
+  await assertSucceeds(setDoc(doc(as('frontdesk'), 'waitlist', 'w9'), waiting('frontdesk')));
+  await assertFails(setDoc(doc(as('frontdesk'), 'waitlist', 'w8'), waiting('owner', { id: 'w8' })), 'stamp must be the writer');
+  await assertFails(setDoc(doc(as('frontdesk'), 'waitlist', 'w7'), waiting('frontdesk', { id: 'w7', status: 'booked' })));
+  await assertFails(setDoc(doc(as('outsider'), 'waitlist', 'w6'), waiting('outsider', { id: 'w6' })));
+  await assertFails(setDoc(doc(as('frontdesk'), 'waitlist', 'w5'), waiting('frontdesk', { id: 'w5', patientId: 'missing' })));
+  await assertFails(updateDoc(doc(as('frontdesk'), 'waitlist', 'w9'), { patientId: 'p2', updatedBy: 'frontdesk', updatedAt: serverTimestamp() }));
+  await assertSucceeds(updateDoc(doc(as('billing'), 'waitlist', 'w9'), { status: 'booked', updatedBy: 'billing', updatedAt: serverTimestamp() }));
+  await assertFails(updateDoc(doc(as('billing'), 'waitlist', 'w9'), { status: 'removed', updatedBy: 'billing', updatedAt: serverTimestamp() }), 'already resolved');
+  await assertFails(deleteDoc(doc(as('owner'), 'waitlist', 'w9')));
+});
+
 // --- Clinical privacy ---
 test('visit notes are for doctors and owners only, and the platform admin cannot read them', async () => {
   await assertSucceeds(getDoc(doc(as('doctor'), 'patientNotes', 'n1')));

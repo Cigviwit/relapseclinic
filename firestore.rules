@@ -59,7 +59,8 @@ service cloud.firestore {
     }
     function validPatient(data, id) {
       return data.keys().hasAll(['id','clinicId','name','phone','consent','updatedBy','updatedAt'])
-        && data.keys().hasOnly(['id','clinicId','name','phone','consent','language','updatedBy','updatedAt'])
+        && data.keys().hasOnly(['id','clinicId','name','phone','consent','language','familyId','updatedBy','updatedAt'])
+        && optionalText(data, 'familyId', 100)
         && data.id == id && text(data.clinicId, 100) && text(data.name, 100)
         && text(data.phone, 20) && data.consent is bool
         && (!('language' in data) || data.language in ['en','mr','hi'])
@@ -98,7 +99,7 @@ service cloud.firestore {
     // sentAt is written by the sendPrescription function only.
     function validPrescription(data, id) {
       return data.keys().hasAll(['id','clinicId','patientId','doctorId','date','medicines','createdAt','status','updatedBy','updatedAt'])
-        && data.keys().hasOnly(['id','clinicId','patientId','doctorId','appointmentId','date','age','sex','specialty','vitals','history','complaints','teeth','findings','diagnosis','procedures','plan','medicines','advice','tests','followUp','createdAt','status','amends','finalizedAt','finalizedBy','updatedBy','updatedAt'])
+        && data.keys().hasOnly(['id','clinicId','patientId','doctorId','appointmentId','date','age','sex','specialty','vitals','history','complaints','teeth','findings','diagnosis','procedures','plan','medicines','advice','tests','followUp','createdAt','status','amends','finalizedAt','finalizedBy','mergedFrom','updatedBy','updatedAt'])
         && (!('teeth' in data) || (data.teeth is list && data.teeth.size() <= 52))
         && data.id == id && text(data.clinicId, 100) && text(data.patientId, 100)
         && text(data.doctorId, 100) && isDate(data.date) && text(data.createdAt, 40)
@@ -220,6 +221,16 @@ service cloud.firestore {
       allow get, list: if canAccess(resource.data.clinicId);
       allow create: if false;
       allow update: if canAccess(resource.data.clinicId) && (validAppointmentOutcome() || validVisitStep());
+      allow delete: if false;
+    }
+    match /waitlist/{id} {
+      allow get, list: if canAccess(resource.data.clinicId);
+      allow create: if canAccess(request.resource.data.clinicId) && request.resource.data.keys().hasOnly(['id','clinicId','patientId','doctorId','note','status','createdAt','updatedBy','updatedAt'])
+        && request.resource.data.id == id && request.resource.data.status == 'waiting' && text(request.resource.data.createdAt, 40)
+        && request.resource.data.doctorId is string && upTo(request.resource.data, 'note', 200)
+        && stampedNow(request.resource.data) && patientInClinic(request.resource.data.patientId, request.resource.data.clinicId);
+      allow update: if canAccess(resource.data.clinicId) && resource.data.status == 'waiting' && request.resource.data.status in ['booked','removed']
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','updatedBy','updatedAt']) && stampedNow(request.resource.data);
       allow delete: if false;
     }
     match /reminders/{id} {

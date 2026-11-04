@@ -7,6 +7,7 @@ import { createDemoRepository, demoAccount, isDemoMode } from '@/lib/demo-reposi
 import { historyStart, mergeById } from '@/lib/data-window';
 import { permissionsFor, roleLabel } from '@/lib/permissions';
 import { IdleLock } from './idle-lock';
+import type { WaitlistEntry } from '@/lib/front-desk';
 import { authService, getAccount, type Account } from '@/lib/auth-service';
 import { blankPrescription, currentPrescriptions, repeatPrescription, withDefaults, type Prescription } from '@/lib/prescription';
 import { unresolvedVisits } from '@/lib/unresolved';
@@ -78,6 +79,7 @@ export default function ClinicApp() {
   const [booking, setBooking] = useState<BookOptions | null>(null);
   const [patientModal, setPatientModal] = useState<{ item?: Patient } | null>(null);
   const [walkIn, setWalkIn] = useState<{ patientId?: string } | null>(null);
+  const [waitlist, setWaitlist] = useState<WaitlistEntry[]>([]);
   const [clinicModal, setClinicModal] = useState(false);
   const [detail, setDetail] = useState<Appointment | null>(null);
   const [rxDraft, setRxDraft] = useState<Prescription | null>(null);
@@ -124,6 +126,7 @@ export default function ClinicApp() {
       repo.subscribeClinicData(clinicId, from, data => { setClinicData({ clinicId, data }); setLoadError(''); }, onError),
       repo.subscribeDeliveries(clinicId, from, setDeliveries, onError),
       repo.subscribeDoctorDigests(clinicId, from, setDigests, onError),
+      repo.subscribeWaitlist(clinicId, setWaitlist, onError),
     ];
     const ranges = loadedRanges.current;
     return () => { unsubs.forEach(u => u()); setOlderAppointments([]); ranges.clear(); };
@@ -154,8 +157,10 @@ export default function ClinicApp() {
 
   const scoped = useMemo(() => {
     if (!db || !clinic) return null;
-    const patients = db.patients.filter(p => p.clinicId === clinic.id);
-    const byId = new Map(patients.map(p => [p.id, p]));
+    const allPatients = db.patients.filter(p => p.clinicId === clinic.id);
+    // Merged patients drop out of lists but stay findable, because old records may still name them.
+    const patients = allPatients.filter(p => !p.mergedInto);
+    const byId = new Map(allPatients.map(p => [p.id, p]));
     const doctors = new Map(clinic.doctors.map(d => [d.id, d]));
     return {
       patients, byId, doctors,
@@ -216,6 +221,7 @@ export default function ClinicApp() {
       await repo.setAppointmentStatus(a.id, status);
       // Visits loaded from further back are not live, so the copy on screen is updated by hand.
       setOlderAppointments(list => list.map(x => x.id === a.id ? { ...x, status } : x));
+      if (status === 'cancelled' && waitlist.length) toast.info(`A slot is free. ${waitlist.length} patient${waitlist.length === 1 ? ' is' : 's are'} on the waitlist.`);
       toast.success(status === 'completed' ? `${scoped!.byId.get(a.patientId)?.name || 'Visit'} marked seen` : status === 'missed' ? 'Marked missed — follow-up will be sent if consented' : `Appointment ${status}`);
     } catch (e) { toast.error((e as Error).message); }
   }
@@ -225,6 +231,7 @@ export default function ClinicApp() {
     await patientSaved();
     await repo.bookAppointment(a);
     toast.success(`Booked ${scoped!.byId.get(a.patientId)?.name || ''} · ${clockLabel(a.time)}`);
+    if (booking?.waitlistId) repo.setWaitlistStatus(booking.waitlistId, 'booked').catch(e => toast.error((e as Error).message));
     setBooking(null); setDetail(null);
   }
   function savePatient(p: Patient) {
@@ -234,7 +241,7 @@ export default function ClinicApp() {
   }
 
   const w: Workspace = {
-    account, db, clinic, repo, now, doctorFilter, setDoctorFilter, can, rxOn, loadRange,
+    account, db, clinic, repo, now, doctorFilter, setDoctorFilter, can, rxOn, loadRange, waitlist,
     patients: scoped.patients, appointments: scoped.appointments, deliveries: scoped.deliveries, digests: scoped.digests, prescriptions: scoped.prescriptions,
     patient: id => scoped.byId.get(id), doctor: id => scoped.doctors.get(id), doctorName: id => scoped.doctors.get(id)?.name || 'Doctor',
     go, book: o => { setDetail(null); setBooking(o || {}); }, openAppointment: setDetail,
@@ -312,7 +319,7 @@ export default function ClinicApp() {
       }} />}
     </Modal>
     <Modal open={!!patientModal} onClose={() => setPatientModal(null)} title={patientModal?.item ? 'Edit patient' : 'Add patient'}>
-      {patientModal && <PatientForm clinicId={clinic.id} patient={patientModal.item} onSave={p => { savePatient(p); setPatientModal(null); if (!patientModal.item) go('patients', p.id); }} />}
+      {patientModal && <PatientForm clinicId={clinic.id} patient={patientModal.item} patients={scoped.patients} onOpenExisting={id => { setPatientModal(null); go('patients', id); }} onSave={p => { savePatient(p); setPatientModal(null); if (!patientModal.item) go('patients', p.id); }} />}
     </Modal>
     <Modal open={!!detail} onClose={() => setDetail(null)} title="Appointment" variant="drawer">
       {detail && <AppointmentDrawer w={w} appointment={detail} onClose={() => setDetail(null)} />}

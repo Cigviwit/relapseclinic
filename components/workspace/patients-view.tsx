@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { ArrowLeft, CalendarPlus, Check, FileText, Lock, MessageCircle, NotebookPen, Pencil, Phone, Repeat2, Search, UserPlus, Users, X } from 'lucide-react';
+import { ArrowLeft, CalendarPlus, ListPlus, Check, FileText, Lock, MessageCircle, NotebookPen, Pencil, Phone, Repeat2, Search, UserPlus, Users, X } from 'lucide-react';
 import { clockLabel, dateLabel, reminderMessage, reminderStatus } from '@/lib/clinic';
 import { patientLanguageLabel } from '@/lib/patient-language';
 import { searchPatients } from '@/lib/patient-search';
@@ -10,6 +10,7 @@ import { currentPrescriptions } from '@/lib/prescription';
 import { Avatar, Empty, Modal, Status } from '../kit';
 import { AllergyBanner, MedicalSummary, NoteCard, NoteComposer, PatientRecordForm, RecordFacts } from './patient-record';
 import { PatientBilling } from '../billing/patient-billing';
+import { AddToWaitlist, FamilySection } from './front-desk-cards';
 import type { Workspace } from './types';
 
 export default function PatientsView({ w, selectedId, select }: { w: Workspace; selectedId: string | null; select: (id: string | null) => void }) {
@@ -53,6 +54,7 @@ function PatientDetail({ w, id, onBack }: { w: Workspace; id: string; onBack: ()
   const record = usePatientRecord(w.repo, w.clinic.id, w.can.readRecords ? id : '');
   const notes = usePatientNotes(w.repo, w.clinic.id, w.can.readNotes ? id : '');
   const [editing, setEditing] = useState(false);
+  const [waitlisting, setWaitlisting] = useState(false);
   const [composer, setComposer] = useState<{ correcting?: PatientNote } | null>(null);
   const allNotes = notes.status === 'ready' ? notes.value : [];
   const timeline = patientTimeline(past, rxs, allNotes);
@@ -70,6 +72,7 @@ function PatientDetail({ w, id, onBack }: { w: Workspace; id: string; onBack: ()
     <div className="pd-actions">
       <button className="btn btn-primary" onClick={() => w.book({ patientId: id })}><CalendarPlus size={16} />Book</button>
       <button className="btn btn-soft" onClick={() => w.addWalkIn(id)}><UserPlus size={16} />Walk-in</button>
+      {!w.waitlist.some(e => e.patientId === id) && <button className="btn btn-ghost" onClick={() => setWaitlisting(true)}><ListPlus size={16} />Waitlist</button>}
       {w.rxOn && w.can.writeRx && <button className="btn btn-soft" onClick={() => w.writeRx({ patientId: id })}><FileText size={16} />Write Rx</button>}
       {w.can.writeRx && rxs[0] && <button className="btn btn-ghost" onClick={() => w.writeRx({ patientId: id, repeat: rxs[0] })}><Repeat2 size={16} />Repeat last Rx</button>}
       <a className="btn btn-ghost" href={`https://wa.me/${p.phone.replace(/\D/g, '')}`} target="_blank" rel="noreferrer"><MessageCircle size={16} />WhatsApp</a>
@@ -95,10 +98,14 @@ function PatientDetail({ w, id, onBack }: { w: Workspace; id: string; onBack: ()
       </section>
       <section>
         {w.can.readRecords && <MedicalSummary w={w} live={record} onEdit={() => setEditing(true)} />}
+        <FamilySection w={w} patient={p} />
         {w.billingOn && <PatientBilling w={w} patientId={id} />}
         {reminders.length > 0 && <><h2 className="sec-title">Older manual reminders</h2>{reminders.map(r => <div className="legacy" key={r.id}><small>{dateLabel(r.date)} · {clockLabel(r.time)} · {reminderStatus(r, w.clinic)}</small><p>{r.sentMessage || reminderMessage(w.clinic, r)}</p></div>)}</>}
       </section>
     </div>
+    <Modal open={waitlisting} onClose={() => setWaitlisting(false)} title="Add to waitlist" subtitle={p.name}>
+      {waitlisting && <AddToWaitlist w={w} patientId={id} onDone={() => setWaitlisting(false)} />}
+    </Modal>
     <Modal open={editing} onClose={() => setEditing(false)} title="Medical record" subtitle={p.name} wide>
       {editing && record.status === 'ready' && <PatientRecordForm w={w} patientId={id} live={record.value} onDone={() => setEditing(false)} />}
     </Modal>

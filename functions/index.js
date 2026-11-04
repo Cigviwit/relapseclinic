@@ -15,6 +15,7 @@ const { closeDay } = require('./closing-logic');
 const { AUDITED, auditEntry } = require('./audit-logic');
 const { createStaff, updateStaff, staffSetupLink, createClinic } = require('./staff-logic');
 const { pdfPath, isFresh, purgeExpiredFiles } = require('./file-retention');
+const { mergePatients } = require('./merge-logic');
 const { recordChanges, addDays, localNow, slotFor, missedDueNow, deliveryId, appointmentMessage, msg91Payload, prescriptionValues, prescriptionFileName, prescriptionDeliveryId, hasReplacementAppointment, digestDue, doctorDigest, doctorDigestId, manualDoctorDigestId } = require('./reminder-logic');
 
 initializeApp();
@@ -461,6 +462,7 @@ const callOptions = { region, maxInstances: 10 };
 exports.bookAppointment = onCall(callOptions, callable((request) => bookAppointment(db, request.auth, request.data?.appointment)));
 exports.bookWalkIn = onCall(callOptions, callable((request) => bookWalkIn(db, request.auth, request.data?.appointment)));
 exports.closeDay = onCall(callOptions, callable((request) => closeDay(db, request.auth, request.data)));
+exports.mergePatients = onCall({ ...callOptions, timeoutSeconds: 300 }, callable((request) => mergePatients(db, request.auth, request.data)));
 exports.createStaff = onCall(callOptions, callable((request) => createStaff(db, getAuth(), request.auth, request.data)));
 exports.updateStaff = onCall(callOptions, callable((request) => updateStaff(db, getAuth(), request.auth, request.data)));
 exports.staffSetupLink = onCall(callOptions, callable((request) => staffSetupLink(db, getAuth(), request.auth, request.data)));

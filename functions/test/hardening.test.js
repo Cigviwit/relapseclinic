@@ -5,6 +5,7 @@ const { dayTotals } = require('../closing-logic');
 const { auditEntry, changedFields, actorOf } = require('../audit-logic');
 const { changeError, cleanStaff } = require('../staff-logic');
 const { isFresh, PDF_LINK_DAYS } = require('../file-retention');
+const { mergeRecords } = require('../merge-logic');
 
 const clinic = { id: 'c1', opens: '09:00', closes: '19:00', doctors: [{ id: 'd1' }, { id: 'd2' }] };
 const patient = { clinicId: 'c1' };
@@ -42,6 +43,29 @@ test('booking follows doctor sessions, leave and clinic holidays', () => {
   assert.match(at('2026-11-11', '10:00'), /does not work on Wednesdays/);
   assert.match(at('2026-11-17', '10:00'), /on leave \(conference\)/);
   assert.match(at('2026-11-24', '10:00'), /closed for Diwali/);
+});
+
+test('merging records never loses an allergy, and only says none if neither lists one', () => {
+  const penicillin = { id: '1', substance: 'Penicillin', reaction: 'Rash', severity: 'severe' };
+  const latex = { id: '2', substance: 'Latex', reaction: '', severity: '' };
+  const both = mergeRecords({ allergyStatus: 'known', allergies: [penicillin] }, { allergyStatus: 'known', allergies: [{ ...penicillin, id: '3', substance: ' penicillin ' }, latex] });
+  assert.deepEqual(both.allergies.map((a) => a.substance), ['Penicillin', 'Latex']);
+  assert.equal(both.allergyStatus, 'known');
+  assert.equal(mergeRecords({ allergyStatus: 'none', allergies: [] }, { allergyStatus: 'known', allergies: [latex] }).allergyStatus, 'known', 'a known allergy beats no known allergies');
+  assert.equal(mergeRecords({ allergyStatus: 'unknown', allergies: [] }, { allergyStatus: 'none', allergies: [] }).allergyStatus, 'none');
+  assert.equal(mergeRecords({ allergyStatus: 'unknown', allergies: [] }, { allergyStatus: 'unknown', allergies: [] }).allergyStatus, 'unknown');
+  assert.equal(mergeRecords(undefined, { allergyStatus: 'known', allergies: [latex] }).allergyStatus, 'known');
+});
+
+test('merging records combines history and prefers the kept record for single values', () => {
+  const merged = mergeRecords({ allergies: [], conditions: 'Diabetes\nHypertension', bloodGroup: 'B+', dob: '1990-01-01', dobEstimated: false, address: '' }, { allergies: [], conditions: 'diabetes\nAsthma', bloodGroup: 'O+', dob: '1991-01-01', dobEstimated: true, address: 'Pune' });
+  assert.equal(merged.conditions, 'Diabetes\nHypertension\nAsthma');
+  assert.deepEqual([merged.bloodGroup, merged.dob, merged.dobEstimated, merged.address], ['B+', '1990-01-01', false, 'Pune']);
+});
+
+test('moving records in a merge writes one log entry, not one per record', () => {
+  assert.equal(auditEntry('bills', 'b', { clinicId: 'c', patientId: 'old' }, { clinicId: 'c', patientId: 'new', mergedFrom: 'old' }), null);
+  assert.equal(auditEntry('bills', 'b', { clinicId: 'c', patientId: 'new', mergedFrom: 'old', note: '' }, { clinicId: 'c', patientId: 'new', mergedFrom: 'old', note: 'x' }).action, 'update', 'later changes are still logged');
 });
 
 test('day totals count payments, refunds and reversals on the day recorded', () => {

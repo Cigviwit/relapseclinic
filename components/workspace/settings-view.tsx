@@ -4,6 +4,7 @@ import { Building2, FileText, IndianRupee, LogOut, Mail } from 'lucide-react';
 import { roleLabel } from '@/lib/permissions';
 import { StaffSettings } from './staff-settings';
 import { ScheduleSettings } from './schedule-settings';
+import { DuplicatesCard } from './front-desk-cards';
 import { ActivityLog, AutoLockSetting, DataExport, TwoStepSetting } from './security-settings';
 import { dateLabel, minutes, today, type Clinic } from '@/lib/clinic';
 import { authService } from '@/lib/auth-service';
@@ -62,6 +63,7 @@ export default function SettingsView({ w, onCreateClinic, demo }: { w: Workspace
         {w.can.editClinic && <section className="card"><ClinicForm key={clinic.id} clinic={clinic} onSave={save} /></section>}
         {w.can.editClinic && <section className="card" id="schedule"><ScheduleSettings key={clinic.id} w={w} /></section>}
         {w.can.manageStaff && <section className="card" id="staff"><StaffSettings key={clinic.id} w={w} /></section>}
+        {w.can.exportData && <section className="card" id="duplicates"><DuplicatesCard w={w} /></section>}
         {w.can.readAudit && <section className="card" id="activity"><ActivityLog key={clinic.id} w={w} /></section>}
         {w.can.exportData && <section className="card" id="data"><DataExport w={w} /></section>}
       </div>

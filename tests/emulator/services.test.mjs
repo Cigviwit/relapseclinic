@@ -12,6 +12,7 @@ const { bookAppointment, bookWalkIn } = require('./booking-logic');
 const { closeDay } = require('./closing-logic');
 const { createStaff, updateStaff, staffSetupLink, createClinic } = require('./staff-logic');
 const { purgeExpiredFiles, pdfPath } = require('./file-retention');
+const { mergePatients } = require('./merge-logic');
 
 let db, auth, bucket;
 const C = 'clinic1';
@@ -30,7 +31,7 @@ before(() => {
   db = getFirestore(); auth = getAuth(); bucket = getStorage().bucket();
 });
 beforeEach(async () => {
-  for (const name of ['users', 'clinics', 'patients', 'appointments', 'bills', 'ledgerEntries', 'dayClosings', 'prescriptionFiles']) await wipe(name);
+  for (const name of ['users', 'clinics', 'patients', 'appointments', 'bills', 'ledgerEntries', 'dayClosings', 'prescriptionFiles', 'prescriptions', 'patientRecords', 'patientNotes', 'auditLog', 'waitlist']) await wipe(name);
   const { users } = await auth.listUsers();
   await Promise.all(users.map((u) => auth.deleteUser(u.uid)));
   await db.doc(`clinics/${C}`).set({ id: C, name: 'Clinic', opens: '09:00', closes: '19:00', timezone: 'Asia/Kolkata', billingEnabled: true, doctors: [{ id: 'd1' }, { id: 'd2' }] });
@@ -215,6 +216,43 @@ test('signed-out callers are refused before anything is looked up', async () => 
   await refused(updateStaff(db, auth, undefined, { uid: 'no-such-person' }), 'unauthenticated');
   await refused(staffSetupLink(db, auth, undefined, { uid: 'no-such-person' }), 'unauthenticated');
   await refused(closeDay(db, undefined, {}), 'unauthenticated');
+});
+
+// --- Merging patients ---
+async function twoPatients() {
+  await db.doc('patients/p2').set({ id: 'p2', clinicId: C, name: 'Asha K', phone: '+911234567890', consent: true, familyId: 'fam' });
+  await db.doc('appointments/old').set(visit({ id: 'old', patientId: 'p2', date: '2026-01-01' }));
+  await db.doc('prescriptions/rx').set({ id: 'rx', clinicId: C, patientId: 'p2', status: 'final' });
+  await db.doc('bills/b').set({ id: 'b', clinicId: C, patientId: 'p2', total: 500, status: 'active' });
+  await db.doc('ledgerEntries/e').set({ id: 'e', clinicId: C, patientId: 'p2', amount: 500 });
+  await db.doc('patientNotes/n').set({ id: 'n', clinicId: C, patientId: 'p2', text: 'x' });
+  await db.doc('patientRecords/p1').set({ id: 'p1', clinicId: C, patientId: 'p1', allergyStatus: 'none', allergies: [], version: 3 });
+  await db.doc('patientRecords/p2').set({ id: 'p2', clinicId: C, patientId: 'p2', allergyStatus: 'known', allergies: [{ id: 'a', substance: 'Penicillin' }], conditions: 'Diabetes', version: 1 });
+}
+const merge = (who, over = {}) => mergePatients(db, who, { clinicId: C, keepId: 'p1', mergeId: 'p2', ...over });
+
+test('merging moves everything to the kept patient and keeps the allergy', async () => {
+  await twoPatients();
+  const { moved } = await merge(owner);
+  assert.equal(moved.bills, 1);
+  for (const path of ['appointments/old', 'prescriptions/rx', 'bills/b', 'ledgerEntries/e', 'patientNotes/n']) assert.equal((await db.doc(path).get()).data().patientId, 'p1', path);
+  const record = (await db.doc('patientRecords/p1').get()).data();
+  assert.deepEqual([record.allergyStatus, record.allergies[0].substance, record.conditions, record.version], ['known', 'Penicillin', 'Diabetes', 4]);
+  assert.equal((await db.doc('patients/p2').get()).data().mergedInto, 'p1');
+  assert.equal((await db.doc('patients/p1').get()).data().familyId, 'fam');
+  assert.equal((await db.collection('auditLog').where('action', '==', 'merge').get()).size, 1);
+});
+
+test('only an owner of this clinic can merge, once, and only two real patients of the clinic', async () => {
+  await twoPatients();
+  await refused(merge(undefined), 'unauthenticated');
+  await refused(merge(frontdesk), 'permission-denied');
+  await refused(merge(platform), 'permission-denied');
+  await refused(merge(outsider), 'permission-denied');
+  await refused(merge(owner, { mergeId: 'p1' }), 'invalid-argument');
+  await refused(merge(owner, { mergeId: 'missing' }), 'failed-precondition');
+  await merge(owner);
+  await refused(merge(owner), 'failed-precondition', /already been merged/);
 });
 
 // --- PDF retention ---

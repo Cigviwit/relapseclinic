@@ -11,8 +11,8 @@ import { Field, FormError, Select } from '../kit';
 import { QrCode } from '../qr-code';
 import type { Workspace } from './types';
 
-const collectionLabel: Record<string, string> = { clinics: 'clinic settings', patients: 'a patient', appointments: 'an appointment', prescriptions: 'a prescription', bills: 'a bill', ledgerEntries: 'a payment', dayClosings: 'a day closing', users: 'a staff login' };
-const actionLabel: Record<AuditEntry['action'], string> = { create: 'Added', update: 'Changed', delete: 'Removed', export: 'Downloaded all data from' };
+const collectionLabel: Record<string, string> = { clinics: 'clinic settings', patients: 'a patient', appointments: 'an appointment', prescriptions: 'a prescription', bills: 'a bill', ledgerEntries: 'a payment', dayClosings: 'a day closing', users: 'a staff login', waitlist: 'a waitlist entry' };
+const actionLabel: Record<AuditEntry['action'], string> = { create: 'Added', update: 'Changed', delete: 'Removed', export: 'Downloaded all data from', merge: 'Merged duplicate records into' };
 
 export function ActivityLog({ w }: { w: Workspace }) {
   const [entries, setEntries] = useState<AuditEntry[] | null>(null);

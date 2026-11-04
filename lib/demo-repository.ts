@@ -2,6 +2,7 @@ import { seed, addDays, validateAppointment, zonedNow } from './clinic';
 import type { Account } from './auth-service';
 import { staleRecordMessage, type AuditEntry, type Repository, type MessageDelivery, type DoctorDigestDelivery, type StaffMember } from './firestore-repository';
 import { roleOptions, type Role } from './permissions';
+import type { WaitlistEntry } from './front-desk';
 import type { Prescription } from './prescription';
 import { blankPatientRecord, recordChanges, type PatientNote, type PatientRecord, type RecordAudit } from './patient-record';
 import { closingId, daySummary, makeClosing, type Bill, type DayClosing, type LedgerEntry } from './billing';
@@ -83,7 +84,7 @@ function demoData() {
     { id: 'l2', clinicId: 'greenleaf', collection: 'bills', docId: 'b1', action: 'create', fields: [], patientId: 'p0', actorUid: 'demo-frontdesk', actorName: 'Asha Kulkarni', at: stamp },
     { id: 'l3', clinicId: 'greenleaf', collection: 'prescriptions', docId: 'rx1', action: 'create', fields: [], patientId: 'p0', actorUid: 'demo-owner', actorName: 'Dr. Priya Nair', at: stamp },
   ];
-  return { db, deliveries, prescriptions, records, notes, audit, digests: [] as DoctorDigestDelivery[], bills, ledger, closings: [] as DayClosing[], staff, activity };
+  return { db, deliveries, prescriptions, records, notes, audit, digests: [] as DoctorDigestDelivery[], bills, ledger, closings: [] as DayClosing[], staff, activity, waitlist: [{ id: 'wl1', clinicId: 'greenleaf', patientId: 'p4', doctorId: '', note: 'Weekday evenings', status: 'waiting', createdAt: stamp }] as WaitlistEntry[] };
 }
 
 export function createDemoRepository(): Repository {
@@ -195,6 +196,18 @@ export function createDemoRepository(): Repository {
       state.deliveries = [...state.deliveries, { id: 'rx-' + id + Date.now(), clinicId: rx.clinicId, appointmentId: rx.appointmentId, patientId: rx.patientId, slot: 'prescription', appointmentDate: rx.date, appointmentTime: '', status: 'accepted' }];
       await later();
       return { status: 'accepted' as const };
+    },
+    subscribeWaitlist: (clinicId, onUpdate) => watch(() => onUpdate(inClinic(state.waitlist, clinicId).filter(e => e.status === 'waiting'))),
+    addToWaitlist: async entry => { state.waitlist = [...state.waitlist, entry]; log({ collection: 'waitlist', docId: entry.id, action: 'create', fields: [], patientId: entry.patientId }); return later(); },
+    setWaitlistStatus: async (id, status) => { state.waitlist = state.waitlist.map(e => e.id === id ? { ...e, status } : e); return later(); },
+    linkFamily: async (a, b, familyId) => { state.db.patients = state.db.patients.map(p => p.id === a.id || p.id === b.id ? { ...p, familyId } : p); return later(); },
+    unlinkFamily: async patient => { state.db.patients = state.db.patients.map(p => { if (p.id !== patient.id) return p; const { familyId: _family, ...rest } = p; return rest; }); return later(); }, // eslint-disable-line @typescript-eslint/no-unused-vars
+    mergePatients: async (_clinic, keepId, mergeId) => {
+      const move = <T extends { patientId: string }>(list: T[]) => list.map(x => x.patientId === mergeId ? { ...x, patientId: keepId } : x);
+      state.db.appointments = move(state.db.appointments); state.prescriptions = move(state.prescriptions); state.notes = move(state.notes); state.bills = move(state.bills); state.ledger = move(state.ledger); state.waitlist = move(state.waitlist);
+      state.db.patients = state.db.patients.map(p => p.id === mergeId ? { ...p, mergedInto: keepId } : p);
+      log({ collection: 'patients', docId: keepId, action: 'merge', fields: [], patientId: keepId });
+      return later();
     },
     subscribeStaff: (clinicId, onUpdate) => watch(() => onUpdate(inClinic(state.staff, clinicId))),
     createStaff: async input => {

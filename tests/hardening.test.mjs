@@ -11,6 +11,7 @@ import { daySummary } from '../lib/billing.ts';
 import { availabilityError, cleanWeekly, doctorDay, strandedVisits } from '../lib/availability.ts';
 import { freeSlots } from '../lib/schedule.ts';
 import { clinicQueue, dayTokens, minutesSince } from '../lib/queue.ts';
+import { duplicatePairs, familyMembers, possibleDuplicates, sharedFamilyId, similarNames } from '../lib/front-desk.ts';
 
 const require = createRequire(import.meta.url);
 const { bookingError } = require('../functions/booking-logic.js');
@@ -184,6 +185,39 @@ test('waiting time is whole minutes and never negative', () => {
   assert.equal(minutesSince('2026-11-05T09:30:30Z', at), 29);
   assert.equal(minutesSince('2026-11-05T10:05:00Z', at), 0);
   assert.equal(minutesSince(undefined, at), 0);
+});
+
+// --- Duplicates and families ---
+const person = (id, name, phone, over = {}) => ({ id, clinicId: 'c', name, phone, consent: true, ...over });
+
+test('names match across order, punctuation and small misspellings, but short names must be exact', () => {
+  assert.ok(similarNames('Rohan Patel', 'patel rohan'));
+  assert.ok(similarNames('Rohan Patel', 'Rohan Patell'));
+  assert.ok(similarNames('Dr. Meera Iyer', 'Dr Meera Iyer'));
+  assert.ok(!similarNames('Rohan Patel', 'Meera Patel'));
+  assert.ok(!similarNames('Asha', 'Usha'), 'two different short names');
+  assert.ok(!similarNames('', 'Asha'));
+});
+
+test('a new patient is checked against those on file, closest match first', () => {
+  const list = [person('a', 'Sunita Shah', '+919800000001'), person('b', 'Rohan Patel', '+919800000002'), person('c', 'Rohan Patell', '+919800000003')];
+  const found = possibleDuplicates(list, { name: 'Rohan Patel', phone: '98000 00002' });
+  assert.deepEqual(found.map(d => [d.patient.id, d.reason]), [['b', 'phone-and-name'], ['c', 'same-name']]);
+  assert.deepEqual(possibleDuplicates(list, { name: 'Vikram Shah', phone: '+919800000001' }).map(d => d.reason), ['same-phone'], 'probably family');
+  assert.deepEqual(possibleDuplicates(list, { id: 'b', name: 'Rohan Patel', phone: '+919800000002' }).map(d => d.patient.id), ['c'], 'not themselves');
+});
+
+test('only the same number and a similar name is offered for merging, so families are left alone', () => {
+  const pairs = duplicatePairs([person('a', 'Rohan Patel', '+919800000002'), person('b', 'Rohan Patell', '+919800000002'), person('c', 'Sunita Patel', '+919800000002'), person('d', 'Rohan Patel', '+919800000009')]);
+  assert.deepEqual(pairs.map(([x, y]) => [x.id, y.id]), [['a', 'b']]);
+});
+
+test('family links reuse an existing family and do not list the person themselves', () => {
+  const list = [person('a', 'A', '1', { familyId: 'f' }), person('b', 'B', '2', { familyId: 'f' }), person('c', 'C', '3')];
+  assert.deepEqual(familyMembers(list, list[0]).map(p => p.id), ['b']);
+  assert.deepEqual(familyMembers(list, list[2]), []);
+  assert.equal(sharedFamilyId(list[2], list[0], () => 'new'), 'f');
+  assert.equal(sharedFamilyId(list[2], person('d', 'D', '4'), () => 'new'), 'new');
 });
 
 // --- Browser and server must agree ---

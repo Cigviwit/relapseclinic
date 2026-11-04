@@ -5,10 +5,11 @@ import type { Prescription } from '@/lib/prescription';
 import type { Bill, DayClosing, LedgerEntry } from '@/lib/billing';
 import type { Permissions } from '@/lib/permissions';
 import type { VisitStage } from '@/lib/queue';
+import type { WaitlistEntry } from '@/lib/front-desk';
 
 export type Page = 'today' | 'schedule' | 'patients' | 'billing' | 'rx' | 'messages' | 'impact' | 'settings';
 
-export type BookOptions = { patientId?: string; doctorId?: string; date?: string; time?: string; item?: Appointment };
+export type BookOptions = { patientId?: string; doctorId?: string; date?: string; time?: string; item?: Appointment; waitlistId?: string };
 export type BillOptions = { patientId?: string; doctorId?: string; appointmentId?: string; reason?: string };
 export type RxOptions = { patientId?: string; doctorId?: string; appointmentId?: string; item?: Prescription; repeat?: Prescription };
 
@@ -34,6 +35,7 @@ export type Workspace = {
   newBill: (o?: BillOptions) => void; openBill: (id: string) => void;
   setStatus: (a: Appointment, status: Appointment['status']) => Promise<void>;
   setStage: (a: Appointment, stage: VisitStage | null) => void;
+  waitlist: WaitlistEntry[];
   addWalkIn: (patientId?: string) => void;
   confirmMissed: (a: Appointment) => void;
   confirm: (c: { title: string; body: string; action: () => void; danger?: boolean; cta?: string }) => void;

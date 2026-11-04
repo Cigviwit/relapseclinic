@@ -3,20 +3,23 @@ import { Plus, Trash2 } from 'lucide-react';
 import { type Clinic, type Patient, type Appointment, type Database, addDays, clockLabel, normalizePhone, validateClinic, validateAppointment, zonedNow } from '@/lib/clinic';
 import { patientLanguages, patientLanguage, type PatientLanguage } from '@/lib/patient-language';
 import { freeSlots } from '@/lib/schedule';
+import { possibleDuplicates } from '@/lib/front-desk';
 import { Chips, Field, FormError, Select } from './kit';
 import { PatientPicker } from './patient-picker';
 
-export function PatientForm({ clinicId, patient, onSave }: { clinicId: string; patient?: Patient; onSave: (p: Patient) => void }) {
+export function PatientForm({ clinicId, patient, patients = [], onSave, onOpenExisting }: { clinicId: string; patient?: Patient; patients?: Patient[]; onSave: (p: Patient) => void; onOpenExisting?: (id: string) => void }) {
   const [name, setName] = useState(patient?.name || '');
   const [phone, setPhone] = useState(patient?.phone || '+91 ');
   const [consent, setConsent] = useState(patient?.consent ?? true);
   const [language, setLanguage] = useState<PatientLanguage>(patientLanguage(patient?.language));
   const [error, setError] = useState('');
-  return <form className="form" onSubmit={e => { e.preventDefault(); try { if (!name.trim()) throw new Error('Enter the patient’s name.'); onSave({ id: patient?.id || crypto.randomUUID(), clinicId, name: name.trim(), phone: normalizePhone(phone), consent, language }); } catch (err) { setError((err as Error).message); } }}>
+  const duplicates = useMemo(() => name.trim().length >= 3 || phone.replace(/\D/g, '').length >= 10 ? possibleDuplicates(patients, { id: patient?.id, name, phone }) : [], [patients, patient?.id, name, phone]);
+  return <form className="form" onSubmit={e => { e.preventDefault(); try { if (!name.trim()) throw new Error('Enter the patient’s name.'); onSave({ ...(patient?.familyId ? { familyId: patient.familyId } : {}), id: patient?.id || crypto.randomUUID(), clinicId, name: name.trim(), phone: normalizePhone(phone), consent, language }); } catch (err) { setError((err as Error).message); } }}>
     <Field label="Full name"><input className="input" required autoFocus value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Aarav Sharma" maxLength={100} /></Field>
     <Field label="WhatsApp number" hint="10-digit Indian numbers get +91 added automatically."><input className="input" required type="tel" value={phone} onChange={e => setPhone(e.target.value)} placeholder="+91 98765 43210" /></Field>
     <Field label="Message language" hint="Messages start in English; the chosen language is added below."><Chips label="Message language" value={language} onChange={setLanguage} options={patientLanguages.map(l => ({ value: l.value, label: l.value === 'en' ? 'English' : l.label.replace('English + ', '+ ') }))} /></Field>
     <label className="check check-box"><input type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)} /><span><strong>WhatsApp consent</strong><small>Patient agrees to appointment and missed-visit reminders on WhatsApp.</small></span></label>
+    {!patient && duplicates.length > 0 && <div className="note note-warn"><strong>Already on file?</strong><ul className="plain-list">{duplicates.slice(0, 4).map(({ patient: d, reason }) => <li key={d.id} className="row-between"><span>{d.name}<small> · {d.phone}{reason === 'same-phone' ? ' · same number, could be family' : ''}</small></span>{onOpenExisting && <button type="button" className="btn btn-sm btn-ghost" onClick={() => onOpenExisting(d.id)}>Open</button>}</li>)}</ul></div>}
     <FormError error={error} />
     <div className="form-foot"><button className="btn btn-primary" type="submit">{patient ? 'Save changes' : 'Add patient'}</button></div>
   </form>;

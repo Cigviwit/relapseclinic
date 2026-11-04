@@ -111,6 +111,9 @@ textarea.input { height: auto; padding: 9px 11px; resize: vertical; line-height:
 .week-hours { display: flex; flex-direction: column; gap: 6px; }
 .week-hours-row { display: grid; grid-template-columns: 44px 1fr; gap: 10px; align-items: center; }
 .block-link { width: 100%; border: 0; cursor: pointer; text-align: left; font: inherit; }
+.plain-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.plain-list small { display: block; color: var(--muted); }
+.btn-link-plain { background: none; border: 0; padding: 0; text-align: left; font: inherit; color: inherit; cursor: pointer; }
 .fs { border: 0; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 12px; }
 .fs legend { font-weight: 700; font-size: .95rem; margin-bottom: 4px; padding: 0; }
 .fs + .fs { border-top: 1px solid var(--line); padding-top: 18px; }

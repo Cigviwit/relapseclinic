@@ -1,4 +1,4 @@
-import { collection, deleteField, doc, documentId, getDoc, getDocs, limit, onSnapshot, orderBy, query, serverTimestamp, setDoc, startAfter, updateDoc, where, type DocumentData, type QueryDocumentSnapshot, type QuerySnapshot } from "firebase/firestore";
+import { collection, deleteField, doc, documentId, getDoc, getDocs, limit, onSnapshot, orderBy, query, serverTimestamp, setDoc, startAfter, updateDoc, where, writeBatch, type DocumentData, type QueryDocumentSnapshot, type QuerySnapshot } from "firebase/firestore";
 import { auth, callFunction, firestore, ServerUnreachable } from "./firebase";
 import { type Account } from "./auth-service";
 import { type Clinic, type Patient, type Appointment, type Reminder } from "./clinic";
@@ -7,6 +7,7 @@ import { type Bill, type DayClosing, type LedgerEntry } from "./billing";
 import { blankPatientRecord, type PatientNote, type PatientRecord, type RecordAudit } from "./patient-record";
 import { mergeById } from "./data-window";
 import type { VisitStage } from "./queue";
+import type { WaitlistEntry } from "./front-desk";
 import { plainValue } from "./csv";
 import type { StaffRole } from "./permissions";
 
@@ -16,7 +17,7 @@ export type ClinicData = { patients: Patient[]; appointments: Appointment[]; rem
 export type PatientHistory = { appointments: Appointment[]; prescriptions: Prescription[] };
 export type StaffMember = { uid: string; clinicId: string; name: string; email: string; role: StaffRole; doctorId: string; active: boolean };
 export type NewStaff = { clinicId: string; name: string; email: string; role: StaffRole; doctorId: string };
-export type AuditEntry = { id: string; clinicId: string; collection: string; docId: string; action: 'create' | 'update' | 'delete' | 'export'; fields: string[]; patientId?: string; actorUid: string; actorName: string; at: string };
+export type AuditEntry = { id: string; clinicId: string; collection: string; docId: string; action: 'create' | 'update' | 'delete' | 'export' | 'merge'; fields: string[]; patientId?: string; actorUid: string; actorName: string; at: string };
 
 export type Repository = {
   subscribeClinics(account: Account, onUpdate: (clinics: Clinic[]) => void, onError: OnError): Unsubscribe;
@@ -63,6 +64,13 @@ export type Repository = {
   addLedgerEntry(account: Account, entry: LedgerEntry): Promise<void>;
   /** The server works out the totals from the stored entries. */
   closeDay(input: { clinicId: string; date: string; countedCash: number; note?: string }): Promise<void>;
+  subscribeWaitlist(clinicId: string, onUpdate: (entries: WaitlistEntry[]) => void, onError: OnError): Unsubscribe;
+  addToWaitlist(entry: WaitlistEntry): Promise<void>;
+  setWaitlistStatus(id: string, status: 'booked' | 'removed'): Promise<void>;
+  linkFamily(a: Patient, b: Patient, familyId: string): Promise<void>;
+  unlinkFamily(patient: Patient): Promise<void>;
+  /** Owner only. Moves everything from one patient to the other on the server. It cannot be undone. */
+  mergePatients(clinicId: string, keepId: string, mergeId: string): Promise<void>;
   subscribeStaff(clinicId: string, onUpdate: (staff: StaffMember[]) => void, onError: OnError): Unsubscribe;
   createStaff(input: NewStaff): Promise<{ uid: string; setupLink: string }>;
   updateStaff(input: { uid: string; name?: string; role?: StaffRole; doctorId?: string; active?: boolean }): Promise<void>;
@@ -178,6 +186,16 @@ export const firestoreRepository: Repository = {
       throw error;
     }
   },
+  subscribeWaitlist: (clinicId, onUpdate, onError) => onSnapshot(query(collection(firestore, "waitlist"), where("clinicId", "==", clinicId), where("status", "==", "waiting")), snap => onUpdate(snap.docs.map(d => d.data() as WaitlistEntry)), onError),
+  addToWaitlist: entry => setDoc(doc(firestore, "waitlist", entry.id), { ...defined(entry), updatedBy: uid(), updatedAt: serverTimestamp() }),
+  setWaitlistStatus: (id, status) => updateDoc(doc(firestore, "waitlist", id), { status, updatedBy: uid(), updatedAt: serverTimestamp() }),
+  linkFamily(a, b, familyId) {
+    const batch = writeBatch(firestore);
+    for (const p of [a, b]) batch.update(doc(firestore, "patients", p.id), { familyId, updatedBy: uid(), updatedAt: serverTimestamp() });
+    return batch.commit();
+  },
+  unlinkFamily: patient => updateDoc(doc(firestore, "patients", patient.id), { familyId: deleteField(), updatedBy: uid(), updatedAt: serverTimestamp() }),
+  mergePatients: (clinicId, keepId, mergeId) => callFunction("mergePatients", { clinicId, keepId, mergeId }, 300000),
   subscribeStaff: (clinicId, onUpdate, onError) => onSnapshot(inClinic("users", clinicId), snap => onUpdate(snap.docs.map(d => { const v = d.data(); return { uid: d.id, clinicId: v.clinicId, name: v.name || v.email, email: v.email, role: v.role || "owner", doctorId: v.doctorId || "", active: v.active !== false } as StaffMember; })), onError),
   createStaff: input => callFunction("createStaff", input),
   updateStaff: input => callFunction("updateStaff", input),

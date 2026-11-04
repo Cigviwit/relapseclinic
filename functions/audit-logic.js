@@ -1,5 +1,5 @@
 // The activity log: who changed what, and when. Field names only, so it never becomes a second copy of medical data.
-const AUDITED = ['clinics', 'patients', 'appointments', 'prescriptions', 'bills', 'ledgerEntries', 'dayClosings', 'users'];
+const AUDITED = ['clinics', 'patients', 'appointments', 'prescriptions', 'bills', 'ledgerEntries', 'dayClosings', 'users', 'waitlist'];
 /** Bookkeeping written by the system, not by a person. A change to only these is not worth logging. */
 const SYSTEM_FIELDS = new Set(['number', 'sentAt', 'updatedAt', 'updatedBy']);
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
@@ -15,6 +15,8 @@ function actorOf(after) {
 
 /** The log entry for one write, or null if nothing a person did changed. */
 function auditEntry(collection, docId, before, after) {
+  // A merge moves many records at once and writes one log entry for all of them.
+  if (before && after && before.mergedFrom !== after.mergedFrom) return null;
   const action = !before ? 'create' : !after ? 'delete' : 'update';
   const fields = action === 'update' ? changedFields(before, after) : [];
   if (action === 'update' && !fields.length) return null;
