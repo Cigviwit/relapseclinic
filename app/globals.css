@@ -290,6 +290,28 @@ button.stat:hover { border-color: var(--line-2); background: var(--surface-2); }
 .wk-ev small { font-weight: 500; opacity: .8; font-size: .72rem; }
 .wk-add { margin-top: auto; height: 28px; border: 1px dashed var(--line-2); border-radius: 6px; color: var(--muted); display: grid; place-items: center; }
 .wk-add:hover { border-color: var(--brand); color: var(--brand); }
+.month { overflow: hidden; }
+.mo-head, .mo-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
+.mo-head { background: var(--surface-2); border-bottom: 1px solid var(--line); }
+.mo-head span { padding: 8px 10px; color: var(--muted); font-weight: 600; text-transform: uppercase; font-size: .72rem; }
+.mo-cell { min-height: 118px; min-width: 0; padding: 6px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 4px; }
+.mo-cell:nth-child(7n) { border-right: 0; }
+.mo-cell:nth-last-child(-n+7) { border-bottom: 0; }
+.mo-cell.is-out { background: var(--surface-2); }
+.mo-cell.is-out .mo-day, .mo-cell.is-out .mo-list { opacity: .55; }
+.mo-top { display: flex; align-items: center; justify-content: space-between; }
+.mo-day { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-weight: 600; font-size: .84rem; }
+.mo-day:hover { background: var(--hover); }
+.is-today .mo-day { background: var(--brand); color: #fff; }
+.mo-add { width: 24px; height: 24px; border-radius: 6px; color: var(--muted); display: grid; place-items: center; }
+.mo-add:hover { background: var(--hover); color: var(--brand); }
+@media (hover: hover) { .mo-add { opacity: 0; } .mo-cell:hover .mo-add, .mo-add:focus-visible { opacity: 1; } }
+.mo-list { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.mo-ev { padding: 2px 6px; border-radius: 5px; border-left: 3px solid; font-size: .74rem; font-weight: 600; text-align: left; line-height: 1.35; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.mo-ev small { font-weight: 500; opacity: .8; font-size: .68rem; }
+.mo-more { align-self: flex-start; padding: 1px 6px; font-size: .72rem; font-weight: 600; color: var(--muted); border-radius: 5px; }
+.mo-more:hover { color: var(--brand); background: var(--hover); }
+.mo-count { display: none; }
 
 /* ── Patients ─────────────────────────────── */
 .page-split { display: grid; grid-template-columns: 340px minmax(0, 1fr); gap: 18px; align-items: start; }
@@ -612,6 +634,11 @@ button.tooth:hover { border-color: var(--brand); color: var(--brand-ink); }
   .q-actions { margin-left: 86px; } .q-actions .btn { height: 30px; }
   .q-main .pill { display: none; }
   .outcome { flex-direction: column; align-items: stretch; }
+  .mo-head span { padding: 6px 2px; text-align: center; font-size: .66rem; }
+  .mo-cell { min-height: 72px; padding: 4px 2px; align-items: center; }
+  .mo-add, .mo-list { display: none; }
+  .mo-top { justify-content: center; }
+  .mo-count { display: block; min-width: 20px; padding: 0 5px; border-radius: 9px; background: var(--brand-soft); color: var(--brand-ink); font-size: .72rem; font-weight: 700; line-height: 18px; }
   .page-split { grid-template-columns: 1fr; }
   .page-split .pd { display: none; } .page-split.has-detail .pl { display: none; } .page-split.has-detail .pd { display: block; }
   .pl { position: static; max-height: none; }
