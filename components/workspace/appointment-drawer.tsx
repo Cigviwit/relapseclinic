@@ -1,4 +1,4 @@
-import { CalendarClock, Check, FileText, IndianRupee, MessageCircle, Phone, UserRound, UserX, XCircle } from 'lucide-react';
+import { CalendarClock, Check, DoorOpen, FileText, IndianRupee, MessageCircle, Phone, Stethoscope, Undo2, UserRound, UserX, XCircle } from 'lucide-react';
 import { clockLabel, dateLabel, minutes, type Appointment } from '@/lib/clinic';
 import { AppointmentTimeline } from '../appointment-timeline';
 import { Avatar, Status } from '../kit';
@@ -19,9 +19,12 @@ export default function AppointmentDrawer({ w, appointment, onClose }: { w: Work
     </dl>
     <div className="drawer-actions">
       {a.status === 'scheduled' && <>
-        <button className="btn btn-primary" onClick={() => { void w.setStatus(a, 'completed'); onClose(); }}><Check size={16} />Mark seen</button>
-        {ended && <button className="btn btn-outline" onClick={() => w.confirmMissed(a)}><UserX size={16} />Mark missed</button>}
-        <button className="btn btn-outline" onClick={() => w.book({ item: a })}><CalendarClock size={16} />Reschedule</button>
+        {!a.stage && a.date === w.now.date && <button className="btn btn-primary" onClick={() => w.setStage(a, 'arrived')}><DoorOpen size={16} />Patient arrived</button>}
+        {a.stage === 'arrived' && <button className="btn btn-primary" onClick={() => w.setStage(a, 'with_doctor')}><Stethoscope size={16} />Send in</button>}
+        <button className={'btn ' + (a.stage === 'with_doctor' ? 'btn-primary' : 'btn-outline')} onClick={() => { void w.setStatus(a, 'completed'); onClose(); }}><Check size={16} />Mark seen</button>
+        {a.stage && <button className="btn btn-ghost" onClick={() => w.setStage(a, null)}><Undo2 size={16} />Undo arrival</button>}
+        {!a.stage && ended && <button className="btn btn-outline" onClick={() => w.confirmMissed(a)}><UserX size={16} />Mark missed</button>}
+        {!a.stage && <button className="btn btn-outline" onClick={() => w.book({ item: a })}><CalendarClock size={16} />Reschedule</button>}
       </>}
       {a.status === 'missed' && <>
         <button className="btn btn-primary" onClick={() => w.book({ item: { ...a, id: crypto.randomUUID(), status: 'scheduled', date: w.now.date, time: '' } })}><CalendarClock size={16} />Rebook visit</button>

@@ -10,7 +10,7 @@ const { defineSecret } = require('firebase-functions/params');
 const { logger } = require('firebase-functions');
 const { financialYear, billNumber } = require('./bill-number');
 const { ServiceError, resolveActor } = require('./access');
-const { bookAppointment } = require('./booking-logic');
+const { bookAppointment, bookWalkIn } = require('./booking-logic');
 const { closeDay } = require('./closing-logic');
 const { AUDITED, auditEntry } = require('./audit-logic');
 const { createStaff, updateStaff, staffSetupLink, createClinic } = require('./staff-logic');
@@ -67,6 +67,8 @@ async function sendAppointment(appointmentId, slot, expectedFingerprint, immedia
   if (!appointmentSnap.exists) return;
   const appointment = appointmentSnap.data();
   if (expectedFingerprint && appointmentFingerprint(appointment) !== expectedFingerprint) return;
+  // Someone standing at the desk needs no booking confirmation or reminder.
+  if (appointment.walkIn && !slot.startsWith('missed_')) return;
   if (slot === 'booked' && appointment.status !== 'scheduled') return;
   if (slot.startsWith('missed_') && appointment.status !== 'missed') return;
   if ((slot === 'two_days_before' || slot === 'appointment_day') && appointment.status !== 'scheduled') return;
@@ -457,6 +459,7 @@ exports.purgePrescriptionFiles = onSchedule({ schedule: 'every day 02:30', timeZ
 
 const callOptions = { region, maxInstances: 10 };
 exports.bookAppointment = onCall(callOptions, callable((request) => bookAppointment(db, request.auth, request.data?.appointment)));
+exports.bookWalkIn = onCall(callOptions, callable((request) => bookWalkIn(db, request.auth, request.data?.appointment)));
 exports.closeDay = onCall(callOptions, callable((request) => closeDay(db, request.auth, request.data)));
 exports.createStaff = onCall(callOptions, callable((request) => createStaff(db, getAuth(), request.auth, request.data)));
 exports.updateStaff = onCall(callOptions, callable((request) => updateStaff(db, getAuth(), request.auth, request.data)));

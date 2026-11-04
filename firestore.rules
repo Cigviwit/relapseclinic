@@ -69,9 +69,21 @@ service cloud.firestore {
     // A browser may only record what happened to a booked visit.
     function validAppointmentOutcome() {
       let after = request.resource.data;
-      return after.diff(resource.data).affectedKeys().hasOnly(['status','updatedBy','updatedAt'])
+      return after.diff(resource.data).affectedKeys().hasOnly(['status','finishedAt','updatedBy','updatedAt'])
         && after.status in ['completed','cancelled','missed'] && resource.data.status in ['scheduled','missed']
+        && (!('finishedAt' in after) || after.finishedAt == request.time)
         && stampedNow(after);
+    }
+    // Moving a booked visit through the queue: arrived, with the doctor, or undoing an arrival made by mistake.
+    function validVisitStep() {
+      let after = request.resource.data;
+      let before = resource.data;
+      let changed = after.diff(before).affectedKeys();
+      return before.status == 'scheduled' && after.status == 'scheduled' && stampedNow(after) && (
+        (!('stage' in before) && after.get('stage', '') == 'arrived' && after.arrivedAt == request.time && changed.hasOnly(['stage','arrivedAt','updatedBy','updatedAt']))
+        || (before.get('stage', '') == 'arrived' && after.get('stage', '') == 'with_doctor' && after.startedAt == request.time && changed.hasOnly(['stage','startedAt','updatedBy','updatedAt']))
+        || ('stage' in before && !('stage' in after) && !('arrivedAt' in after) && !('startedAt' in after) && changed.hasOnly(['stage','arrivedAt','startedAt','updatedBy','updatedAt']))
+      );
     }
     function validReminder(data, id) {
       return data.keys().hasAll(['id','clinicId','patientId','date','time','message','status'])
@@ -207,7 +219,7 @@ service cloud.firestore {
     match /appointments/{id} {
       allow get, list: if canAccess(resource.data.clinicId);
       allow create: if false;
-      allow update: if canAccess(resource.data.clinicId) && validAppointmentOutcome();
+      allow update: if canAccess(resource.data.clinicId) && (validAppointmentOutcome() || validVisitStep());
       allow delete: if false;
     }
     match /reminders/{id} {

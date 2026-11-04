@@ -60,6 +60,29 @@ export function AppointmentForm({ db, clinic, date, appointment, patientId, doct
   </form>;
 }
 
+export function WalkInForm({ clinic, patients, patientId, doctorId, onSave, onCreatePatient }: { clinic: Clinic; patients: Patient[]; patientId?: string; doctorId?: string; onSave: (a: Pick<Appointment, 'id' | 'clinicId' | 'patientId' | 'doctorId' | 'reason'>) => Promise<void>; onCreatePatient: (p: Patient) => void }) {
+  const [patient, setPatient] = useState(patientId || '');
+  const [doctor, setDoctor] = useState(doctorId || clinic.doctors[0]?.id || '');
+  const [reason, setReason] = useState('Check-up');
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [id] = useState(() => crypto.randomUUID());
+  return <form className="form" onSubmit={e => {
+    e.preventDefault();
+    if (!patient) { setError('Choose or add the patient.'); return; }
+    if (!reason.trim()) { setError('Enter the reason for the visit.'); return; }
+    setSaving(true); setError('');
+    onSave({ id, clinicId: clinic.id, patientId: patient, doctorId: doctor, reason: reason.trim() }).catch(err => setError((err as Error).message)).finally(() => setSaving(false));
+  }}>
+    <Field label="Patient"><PatientPicker patients={patients} value={patient} onChange={setPatient} onCreate={onCreatePatient} clinicId={clinic.id} autoFocus={!patient} /></Field>
+    {clinic.doctors.length > 1 && <Field label="Doctor"><Select label="Doctor" value={doctor} onChange={setDoctor} options={clinic.doctors.map(d => ({ value: d.id, label: d.name }))} /></Field>}
+    <Field label="Reason"><div className="chips chips-sm">{visitTypes.map(v => <button type="button" key={v} className={'chip' + (reason === v ? ' on' : '')} onClick={() => setReason(v)}>{v}</button>)}</div>
+      <input className="input" required value={reason} maxLength={100} onChange={e => setReason(e.target.value)} aria-label="Reason" /></Field>
+    <FormError error={error} />
+    <div className="form-foot"><span className="muted">No slot needed. They see the doctor between bookings.</span><button className="btn btn-primary" type="submit" disabled={saving}>{saving ? 'Adding…' : 'Add to queue'}</button></div>
+  </form>;
+}
+
 export function ClinicForm({ clinic, onSave, busy }: { clinic?: Clinic; onSave: (c: Clinic) => void; busy?: boolean }) {
   const [c, setC] = useState<Clinic>(clinic || { id: crypto.randomUUID(), name: '', address: '', phone: '+91 ', timezone: 'Asia/Kolkata', opens: '09:00', closes: '19:00', doctors: [{ id: crypto.randomUUID(), name: '', specialty: 'Dentist' }], rxPad: { specialty: 'dental' } });
   const [error, setError] = useState('');

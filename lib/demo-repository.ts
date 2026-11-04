@@ -1,4 +1,4 @@
-import { seed, addDays, validateAppointment } from './clinic';
+import { seed, addDays, validateAppointment, zonedNow } from './clinic';
 import type { Account } from './auth-service';
 import { staleRecordMessage, type AuditEntry, type Repository, type MessageDelivery, type DoctorDigestDelivery, type StaffMember } from './firestore-repository';
 import { roleOptions, type Role } from './permissions';
@@ -134,6 +134,24 @@ export function createDemoRepository(): Repository {
     setAppointmentStatus: async (id, status) => {
       state.db.appointments = state.db.appointments.map(a => a.id === id ? { ...a, status } : a);
       log({ collection: 'appointments', docId: id, action: 'update', fields: ['status'] });
+      return later();
+    },
+    bookWalkIn: async a => {
+      const { date, time } = zonedNow('Asia/Kolkata');
+      state.db.appointments = upsert(state.db.appointments, { ...a, date, time, duration: 15, status: 'scheduled', walkIn: true, stage: 'arrived', arrivedAt: new Date().toISOString() });
+      log({ collection: 'appointments', docId: a.id, action: 'create', fields: [], patientId: a.patientId });
+      return later();
+    },
+    setVisitStage: async (id, stage) => {
+      const at = new Date().toISOString();
+      state.db.appointments = state.db.appointments.map(a => {
+        if (a.id !== id) return a;
+        if (stage === 'arrived') return { ...a, stage, arrivedAt: at };
+        if (stage === 'with_doctor') return { ...a, stage, startedAt: at };
+        const { stage: _stage, arrivedAt: _arrived, startedAt: _started, ...rest } = a; // eslint-disable-line @typescript-eslint/no-unused-vars
+        return rest;
+      });
+      log({ collection: 'appointments', docId: id, action: 'update', fields: ['stage'] });
       return later();
     },
     savePrescription: async (account, rx) => {

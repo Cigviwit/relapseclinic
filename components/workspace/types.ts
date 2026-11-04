@@ -4,6 +4,7 @@ import type { DoctorDigestDelivery, MessageDelivery, Repository } from '@/lib/fi
 import type { Prescription } from '@/lib/prescription';
 import type { Bill, DayClosing, LedgerEntry } from '@/lib/billing';
 import type { Permissions } from '@/lib/permissions';
+import type { VisitStage } from '@/lib/queue';
 
 export type Page = 'today' | 'schedule' | 'patients' | 'billing' | 'rx' | 'messages' | 'impact' | 'settings';
 
@@ -32,6 +33,8 @@ export type Workspace = {
   billingOn: boolean; bills: Bill[]; ledger: LedgerEntry[]; closings: DayClosing[];
   newBill: (o?: BillOptions) => void; openBill: (id: string) => void;
   setStatus: (a: Appointment, status: Appointment['status']) => Promise<void>;
+  setStage: (a: Appointment, stage: VisitStage | null) => void;
+  addWalkIn: (patientId?: string) => void;
   confirmMissed: (a: Appointment) => void;
   confirm: (c: { title: string; body: string; action: () => void; danger?: boolean; cta?: string }) => void;
 };

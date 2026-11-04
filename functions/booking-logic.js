@@ -1,7 +1,8 @@
 // Booking runs here, not in the browser, so two front desks cannot take the same slot.
 const { FieldValue } = require('firebase-admin/firestore');
 const { ServiceError, resolveActor, CLINIC_ROLES } = require('./access');
-const { availabilityError } = require('./availability');
+const { availabilityError, doctorDay } = require('./availability');
+const { localNow } = require('./reminder-logic');
 
 const minutes = (t) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3));
 const ID = /^[A-Za-z0-9_-]{1,100}$/;
@@ -36,6 +37,7 @@ async function bookAppointment(db, auth, input) {
   await db.runTransaction(async (tx) => {
     const [clinicSnap, patientSnap, existing, others] = await Promise.all([tx.get(db.doc(`clinics/${a.clinicId}`)), tx.get(db.doc(`patients/${a.patientId}`)), tx.get(ref), tx.get(sameDay)]);
     if (existing.exists && (existing.data().clinicId !== a.clinicId || existing.data().status !== 'scheduled')) throw new ServiceError('failed-precondition', 'Only a booked appointment can be rescheduled. Make a new booking instead.');
+    if (existing.data()?.stage) throw new ServiceError('failed-precondition', 'This patient has already arrived. Undo the arrival before rescheduling.');
     const error = bookingError(clinicSnap.data(), patientSnap.data(), a, others.docs.map((d) => ({ ...d.data(), id: d.id })));
     if (error) throw new ServiceError('failed-precondition', error);
     tx.set(ref, { ...a, updatedBy: actor.uid, updatedAt: FieldValue.serverTimestamp() });
@@ -43,4 +45,23 @@ async function bookAppointment(db, auth, input) {
   return { id: a.id };
 }
 
-module.exports = { bookingError, bookAppointment };
+/**
+ * Someone who walks in joins the queue now. They take no fixed slot, so they do not need a free one:
+ * the doctor sees them between bookings. A closed day or a doctor on leave still refuses.
+ */
+async function bookWalkIn(db, auth, input) {
+  const a = cleanAppointment({ ...input, date: '', time: '' });
+  const actor = await resolveActor(db, auth, a.clinicId, [...CLINIC_ROLES, 'platform'], 'add walk-ins');
+  const ref = db.doc(`appointments/${a.id}`);
+  const [clinicSnap, patientSnap, existing] = await Promise.all([db.doc(`clinics/${a.clinicId}`).get(), db.doc(`patients/${a.patientId}`).get(), ref.get()]);
+  const clinic = clinicSnap.data(), patient = patientSnap.data();
+  if (existing.exists) throw new ServiceError('already-exists', 'This walk-in was already added.');
+  if (!clinic || !patient || patient.clinicId !== a.clinicId || !clinic.doctors.some((d) => d.id === a.doctorId)) throw new ServiceError('failed-precondition', 'Choose a patient and doctor from this clinic.');
+  const { date, time } = localNow(clinic.timezone, new Date());
+  const { off } = doctorDay(clinic, a.doctorId, date);
+  if (off) throw new ServiceError('failed-precondition', off);
+  await ref.create({ ...a, date, time, duration: 15, walkIn: true, stage: 'arrived', arrivedAt: FieldValue.serverTimestamp(), updatedBy: actor.uid, updatedAt: FieldValue.serverTimestamp() });
+  return { id: a.id, date, time };
+}
+
+module.exports = { bookingError, bookAppointment, bookWalkIn };

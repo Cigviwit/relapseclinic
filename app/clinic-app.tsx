@@ -14,7 +14,7 @@ import type { Bill, DayClosing, LedgerEntry } from '@/lib/billing';
 import AuthView from '@/components/auth/auth-view';
 import { Logo } from '@/components/logo';
 import { Kbd, Modal, Select } from '@/components/kit';
-import { AppointmentForm, PatientForm } from '@/components/clinic-forms';
+import { AppointmentForm, PatientForm, WalkInForm } from '@/components/clinic-forms';
 import TodayView from '@/components/workspace/today-view';
 import PatientsView from '@/components/workspace/patients-view';
 import AppointmentDrawer from '@/components/workspace/appointment-drawer';
@@ -77,6 +77,7 @@ export default function ClinicApp() {
   const [doctorFilter, setDoctorFilter] = useState('all');
   const [booking, setBooking] = useState<BookOptions | null>(null);
   const [patientModal, setPatientModal] = useState<{ item?: Patient } | null>(null);
+  const [walkIn, setWalkIn] = useState<{ patientId?: string } | null>(null);
   const [clinicModal, setClinicModal] = useState(false);
   const [detail, setDetail] = useState<Appointment | null>(null);
   const [rxDraft, setRxDraft] = useState<Prescription | null>(null);
@@ -208,6 +209,8 @@ export default function ClinicApp() {
   if (clinics && !clinic) return <><Toaster position="top-center" richColors /><div className="first-run"><Logo /><h1>Create the first clinic</h1><p className="muted">No clinics yet. Set up a clinic and its owner’s login.</p><Suspense fallback={null}><AdminCreateClinic repo={repo} onCreated={() => {}} /></Suspense><button className="btn btn-ghost" onClick={() => authService.signOut()}>Sign out</button></div></>;
   if (!db || !clinic || !scoped) return <Splash text="Loading your clinic…" />;
 
+  // Offline, a patient save never finishes, so wait only briefly: the server gives the clear answer either way.
+  const patientSaved = () => Promise.race([patientSave.current.catch(() => {}), new Promise(resolve => setTimeout(resolve, PATIENT_SAVE_WAIT_MS))]);
   async function setStatus(a: Appointment, status: Appointment['status']) {
     try {
       await repo.setAppointmentStatus(a.id, status);
@@ -219,8 +222,7 @@ export default function ClinicApp() {
   /** Waits for the server: only it can say the slot is still free. A refusal stays in the form, which remains open. */
   async function saveAppointment(a: Appointment) {
     validateAppointment(db!, a);
-    // Offline, that save never finishes, so wait only briefly: the server gives the clear answer either way.
-    await Promise.race([patientSave.current.catch(() => {}), new Promise(resolve => setTimeout(resolve, PATIENT_SAVE_WAIT_MS))]);
+    await patientSaved();
     await repo.bookAppointment(a);
     toast.success(`Booked ${scoped!.byId.get(a.patientId)?.name || ''} · ${clockLabel(a.time)}`);
     setBooking(null); setDetail(null);
@@ -246,6 +248,8 @@ export default function ClinicApp() {
     billingOn, bills: scoped.bills, ledger: scoped.ledger, closings: scoped.closings,
     newBill: o => { setDetail(null); setBillDraft(o || {}); }, openBill: id => { setDetail(null); setOpenBillId(id); },
     setStatus, confirm: setConfirmBox,
+    setStage: (a, stage) => { repo.setVisitStage(a.id, stage).catch(e => toast.error((e as Error).message)); },
+    addWalkIn: patientId => { setDetail(null); setWalkIn({ patientId }); },
     confirmMissed: a => setConfirmBox({ title: 'Mark as missed?', body: `${scoped.byId.get(a.patientId)?.name || 'The patient'} will get a WhatsApp follow-up now if they consented to messages.`, cta: 'Mark missed', action: () => { void setStatus(a, 'missed'); setDetail(null); } }),
   };
 
@@ -298,6 +302,14 @@ export default function ClinicApp() {
 
     <Modal open={!!booking} onClose={() => setBooking(null)} title={booking?.item?.status === 'scheduled' && scoped.appointments.some(a => a.id === booking.item!.id) ? 'Reschedule appointment' : 'New appointment'} subtitle={clinic.name}>
       {booking && <AppointmentForm db={db} clinic={clinic} date={booking.date || booking.item?.date || now.date} appointment={booking.item} patientId={booking.patientId} doctorId={booking.doctorId || (doctorFilter !== 'all' ? doctorFilter : undefined)} time={booking.time} onSave={saveAppointment} onCreatePatient={savePatient} />}
+    </Modal>
+    <Modal open={!!walkIn} onClose={() => setWalkIn(null)} title="Add walk-in" subtitle="Joins today’s queue now">
+      {walkIn && <WalkInForm clinic={clinic} patients={scoped.patients} patientId={walkIn.patientId} doctorId={doctorFilter !== 'all' ? doctorFilter : undefined} onCreatePatient={savePatient} onSave={async a => {
+        await patientSaved();
+        await repo.bookWalkIn(a);
+        toast.success(`${scoped.byId.get(a.patientId)?.name || 'Patient'} added to the queue`);
+        setWalkIn(null);
+      }} />}
     </Modal>
     <Modal open={!!patientModal} onClose={() => setPatientModal(null)} title={patientModal?.item ? 'Edit patient' : 'Add patient'}>
       {patientModal && <PatientForm clinicId={clinic.id} patient={patientModal.item} onSave={p => { savePatient(p); setPatientModal(null); if (!patientModal.item) go('patients', p.id); }} />}

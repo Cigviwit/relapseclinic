@@ -8,7 +8,7 @@ const { initializeApp } = require('firebase-admin/app');
 const { getFirestore, Timestamp } = require('firebase-admin/firestore');
 const { getAuth } = require('firebase-admin/auth');
 const { getStorage } = require('firebase-admin/storage');
-const { bookAppointment } = require('./booking-logic');
+const { bookAppointment, bookWalkIn } = require('./booking-logic');
 const { closeDay } = require('./closing-logic');
 const { createStaff, updateStaff, staffSetupLink, createClinic } = require('./staff-logic');
 const { purgeExpiredFiles, pdfPath } = require('./file-retention');
@@ -83,6 +83,36 @@ test('another clinic’s appointment id cannot be taken over', async () => {
   await db.doc('appointments/theirs').set(visit({ id: 'theirs', clinicId: 'clinic2', doctorId: 'dx' }));
   await db.doc('patients/p2').set({ id: 'p2', clinicId: C, name: 'B', phone: '+911234567891', consent: true });
   await refused(bookAppointment(db, frontdesk, visit({ id: 'theirs', patientId: 'p2' })), 'failed-precondition');
+});
+
+test('a walk-in joins the queue now, on the server clock, even if the slot is taken', async () => {
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
+  await bookWalkIn(db, frontdesk, { id: 'w1', clinicId: C, patientId: 'p1', doctorId: 'd1', reason: 'Toothache', date: '1999-01-01', time: '01:00' });
+  await bookWalkIn(db, frontdesk, { id: 'w2', clinicId: C, patientId: 'p1', doctorId: 'd1', reason: 'Toothache' });
+  const saved = (await db.doc('appointments/w1').get()).data();
+  assert.deepEqual([saved.date, saved.walkIn, saved.stage, saved.status, saved.updatedBy], [today, true, 'arrived', 'scheduled', 'frontdesk']);
+  assert.ok(saved.arrivedAt);
+});
+
+test('a walk-in is refused on a closed day, for a doctor on leave, for another clinic and when repeated', async () => {
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
+  const walkIn = (over = {}) => ({ id: 'w1', clinicId: C, patientId: 'p1', doctorId: 'd1', reason: 'x', ...over });
+  await refused(bookWalkIn(db, outsider, walkIn()), 'permission-denied');
+  await refused(bookWalkIn(db, undefined, walkIn()), 'unauthenticated');
+  await refused(bookWalkIn(db, frontdesk, walkIn({ patientId: 'missing' })), 'failed-precondition', /from this clinic/);
+  await db.doc(`clinics/${C}`).update({ doctors: [{ id: 'd1', name: 'Dr A', leave: [{ id: 'l', from: today, to: today }] }, { id: 'd2' }] });
+  await refused(bookWalkIn(db, frontdesk, walkIn()), 'failed-precondition', /on leave/);
+  await db.doc(`clinics/${C}`).update({ closedDates: [{ date: today, reason: 'Diwali' }] });
+  await refused(bookWalkIn(db, frontdesk, walkIn({ doctorId: 'd2' })), 'failed-precondition', /closed for Diwali/);
+  await db.doc(`clinics/${C}`).update({ closedDates: [] });
+  await bookWalkIn(db, frontdesk, walkIn({ doctorId: 'd2' }));
+  await refused(bookWalkIn(db, frontdesk, walkIn({ doctorId: 'd2' })), 'already-exists');
+});
+
+test('someone who has arrived cannot be rescheduled until the arrival is undone', async () => {
+  await bookAppointment(db, frontdesk, visit());
+  await db.doc('appointments/a1').update({ stage: 'arrived' });
+  await refused(bookAppointment(db, frontdesk, visit({ time: '12:00' })), 'failed-precondition', /already arrived/);
 });
 
 // --- Day closing ---

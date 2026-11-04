@@ -10,6 +10,7 @@ import { amendPrescription, blankPrescription, cleanPrescription, currentPrescri
 import { daySummary } from '../lib/billing.ts';
 import { availabilityError, cleanWeekly, doctorDay, strandedVisits } from '../lib/availability.ts';
 import { freeSlots } from '../lib/schedule.ts';
+import { clinicQueue, dayTokens, minutesSince } from '../lib/queue.ts';
 
 const require = createRequire(import.meta.url);
 const { bookingError } = require('../functions/booking-logic.js');
@@ -166,6 +167,23 @@ test('booked visits left outside new hours are reported, not moved', () => {
   const base = { clinicId: 'c1', patientId: 'p', doctorId: 'd1', duration: 30, reason: 'x', status: 'scheduled' };
   const list = [{ ...base, id: 'ok', date: '2026-11-10', time: '09:00' }, { ...base, id: 'gap', date: '2026-11-10', time: '14:00' }, { ...base, id: 'leave', date: '2026-11-17', time: '09:00' }, { ...base, id: 'past', date: '2026-10-01', time: '14:00' }, { ...base, id: 'done', date: '2026-11-10', time: '14:00', status: 'cancelled' }];
   assert.deepEqual(strandedVisits(list, weeklyClinic, '2026-11-05').map(a => a.id), ['gap', 'leave']);
+});
+
+// --- Queue ---
+test('tokens follow arrival order and do not change as people leave', () => {
+  const visit = (id, arrivedAt, over = {}) => ({ id, date: 'D', status: 'scheduled', stage: 'arrived', arrivedAt, ...over });
+  const list = [visit('c', '09:30'), visit('a', '09:00', { status: 'completed' }), visit('b', '09:10', { stage: 'with_doctor' }), visit('x', '09:05', { status: 'cancelled' }), { id: 'booked', date: 'D', status: 'scheduled' }, visit('other', '09:00', { date: 'E' })];
+  assert.deepEqual([...dayTokens(list, 'D')], [['a', 1], ['b', 2], ['c', 3]]);
+  const { waiting, withDoctor } = clinicQueue(list, 'D');
+  assert.deepEqual(waiting.map(e => [e.appointment.id, e.token]), [['c', 3]]);
+  assert.deepEqual(withDoctor.map(e => [e.appointment.id, e.token]), [['b', 2]]);
+});
+
+test('waiting time is whole minutes and never negative', () => {
+  const at = new Date('2026-11-05T10:00:00Z').getTime();
+  assert.equal(minutesSince('2026-11-05T09:30:30Z', at), 29);
+  assert.equal(minutesSince('2026-11-05T10:05:00Z', at), 0);
+  assert.equal(minutesSince(undefined, at), 0);
 });
 
 // --- Browser and server must agree ---

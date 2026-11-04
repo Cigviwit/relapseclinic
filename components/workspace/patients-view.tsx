@@ -69,6 +69,7 @@ function PatientDetail({ w, id, onBack }: { w: Workspace; id: string; onBack: ()
     {w.can.readRecords ? <><AllergyBanner live={record} /><RecordFacts r={record.value} today={w.now.date} /></> : <p className="allergy note"><Lock size={16} /><span>Medical records are not available to your role.</span></p>}
     <div className="pd-actions">
       <button className="btn btn-primary" onClick={() => w.book({ patientId: id })}><CalendarPlus size={16} />Book</button>
+      <button className="btn btn-soft" onClick={() => w.addWalkIn(id)}><UserPlus size={16} />Walk-in</button>
       {w.rxOn && w.can.writeRx && <button className="btn btn-soft" onClick={() => w.writeRx({ patientId: id })}><FileText size={16} />Write Rx</button>}
       {w.can.writeRx && rxs[0] && <button className="btn btn-ghost" onClick={() => w.writeRx({ patientId: id, repeat: rxs[0] })}><Repeat2 size={16} />Repeat last Rx</button>}
       <a className="btn btn-ghost" href={`https://wa.me/${p.phone.replace(/\D/g, '')}`} target="_blank" rel="noreferrer"><MessageCircle size={16} />WhatsApp</a>

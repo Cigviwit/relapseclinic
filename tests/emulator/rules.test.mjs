@@ -2,7 +2,7 @@
 import { after, before, beforeEach, test } from 'node:test';
 import { readFileSync } from 'node:fs';
 import { assertFails, assertSucceeds, initializeTestEnvironment } from '@firebase/rules-unit-testing';
-import { collection, deleteDoc, doc, getDoc, getDocs, query, serverTimestamp, setDoc, updateDoc, where } from 'firebase/firestore';
+import { collection, deleteDoc, deleteField, doc, getDoc, getDocs, query, serverTimestamp, setDoc, updateDoc, where } from 'firebase/firestore';
 
 let env;
 const C = 'clinic1', OTHER = 'clinic2';
@@ -128,6 +128,26 @@ test('any staff member can record the outcome of a visit, stamped with their own
 test('an outcome cannot be forged in another person’s name or changed by another clinic', async () => {
   await assertFails(updateDoc(doc(as('frontdesk'), 'appointments', 'a1'), { status: 'missed', updatedBy: 'owner', updatedAt: serverTimestamp() }));
   await assertFails(updateDoc(doc(as('outsider'), 'appointments', 'a1'), { status: 'missed', updatedBy: 'outsider', updatedAt: serverTimestamp() }));
+});
+
+test('staff move a booked visit through the queue, stamped with their own id and the real time', async () => {
+  const db = as('frontdesk');
+  const stamp = { updatedBy: 'frontdesk', updatedAt: serverTimestamp() };
+  await assertFails(updateDoc(doc(db, 'appointments', 'a1'), { stage: 'with_doctor', startedAt: serverTimestamp(), ...stamp }), 'cannot skip arriving');
+  await assertFails(updateDoc(doc(db, 'appointments', 'a1'), { stage: 'arrived', arrivedAt: new Date(0), ...stamp }), 'cannot backdate an arrival');
+  await assertSucceeds(updateDoc(doc(db, 'appointments', 'a1'), { stage: 'arrived', arrivedAt: serverTimestamp(), ...stamp }));
+  await assertFails(updateDoc(doc(db, 'appointments', 'a1'), { stage: 'with_doctor', startedAt: serverTimestamp(), time: '12:00', ...stamp }), 'cannot move the time along the way');
+  await assertSucceeds(updateDoc(doc(db, 'appointments', 'a1'), { stage: 'with_doctor', startedAt: serverTimestamp(), ...stamp }));
+  await assertSucceeds(updateDoc(doc(db, 'appointments', 'a1'), { status: 'completed', finishedAt: serverTimestamp(), ...stamp }));
+  await assertFails(updateDoc(doc(db, 'appointments', 'a1'), { stage: 'arrived', arrivedAt: serverTimestamp(), ...stamp }), 'a finished visit stays finished');
+});
+
+test('an arrival made by mistake can be undone', async () => {
+  const db = as('frontdesk');
+  const stamp = { updatedBy: 'frontdesk', updatedAt: serverTimestamp() };
+  await updateDoc(doc(db, 'appointments', 'a1'), { stage: 'arrived', arrivedAt: serverTimestamp(), ...stamp });
+  await assertSucceeds(updateDoc(doc(db, 'appointments', 'a1'), { stage: deleteField(), arrivedAt: deleteField(), startedAt: deleteField(), ...stamp }));
+  await assertFails(updateDoc(doc(as('outsider'), 'appointments', 'a1'), { stage: 'arrived', arrivedAt: serverTimestamp(), updatedBy: 'outsider', updatedAt: serverTimestamp() }));
 });
 
 // --- Patients ---

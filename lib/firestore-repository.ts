@@ -1,4 +1,4 @@
-import { collection, doc, documentId, getDoc, getDocs, limit, onSnapshot, orderBy, query, serverTimestamp, setDoc, startAfter, updateDoc, where, type DocumentData, type QueryDocumentSnapshot, type QuerySnapshot } from "firebase/firestore";
+import { collection, deleteField, doc, documentId, getDoc, getDocs, limit, onSnapshot, orderBy, query, serverTimestamp, setDoc, startAfter, updateDoc, where, type DocumentData, type QueryDocumentSnapshot, type QuerySnapshot } from "firebase/firestore";
 import { auth, callFunction, firestore, ServerUnreachable } from "./firebase";
 import { type Account } from "./auth-service";
 import { type Clinic, type Patient, type Appointment, type Reminder } from "./clinic";
@@ -6,6 +6,7 @@ import { withDefaults, type Prescription } from "./prescription";
 import { type Bill, type DayClosing, type LedgerEntry } from "./billing";
 import { blankPatientRecord, type PatientNote, type PatientRecord, type RecordAudit } from "./patient-record";
 import { mergeById } from "./data-window";
+import type { VisitStage } from "./queue";
 import { plainValue } from "./csv";
 import type { StaffRole } from "./permissions";
 
@@ -37,6 +38,10 @@ export type Repository = {
   bookAppointment(appointment: Appointment): Promise<void>;
   /** Records what happened to a booked visit. */
   setAppointmentStatus(appointmentId: string, status: Appointment['status']): Promise<void>;
+  /** Adds someone to today's queue now. Fails when offline. The server sets the date and time. */
+  bookWalkIn(appointment: Pick<Appointment, 'id' | 'clinicId' | 'patientId' | 'doctorId' | 'reason'>): Promise<void>;
+  /** Moves a booked visit through the queue; `null` undoes an arrival made by mistake. */
+  setVisitStage(appointmentId: string, stage: VisitStage | null): Promise<void>;
   /** `status: 'final'` locks the prescription for good, under the signed-in person's name. */
   savePrescription(account: Account, prescription: Prescription): Promise<void>;
   /** Sends the PDF through the clinic's MSG91 WhatsApp number. */
@@ -81,6 +86,7 @@ const unconfirmed = (snap: QuerySnapshot<DocumentData>) => snap.empty && snap.me
 /** Firestore refuses undefined fields; optional fields are simply left out. */
 const defined = <T extends object>(value: T) => Object.fromEntries(Object.entries(value).filter(([, v]) => v !== undefined));
 const uid = () => auth.currentUser?.uid ?? "";
+const toAppointment = (row: DocumentData) => ({ ...row, ...(row.arrivedAt ? { arrivedAt: iso(row.arrivedAt) } : {}), ...(row.startedAt ? { startedAt: iso(row.startedAt) } : {}), ...(row.finishedAt ? { finishedAt: iso(row.finishedAt) } : {}) }) as Appointment;
 const toPrescription = (row: DocumentData) => withDefaults({ ...row, finalizedAt: iso(row.finalizedAt) } as unknown as Prescription);
 
 const EXPORTED = ["patients", "appointments", "patientRecords", "patientNotes", "prescriptions", "bills", "ledgerEntries", "dayClosings", "messageDeliveries"];
@@ -97,12 +103,12 @@ export const firestoreRepository: Repository = {
       const { patients, recent, unresolved, reminders } = parts;
       if (patients && recent && unresolved && reminders) onUpdate({ patients, reminders, appointments: mergeById(unresolved, recent) });
     };
-    const listen = <K extends keyof typeof parts>(key: K, source: Parameters<typeof onSnapshot>[0]) => onSnapshot(source as ReturnType<typeof inClinic>, snap => { parts[key] = snap.docs.map(d => d.data()) as (typeof parts)[K]; notify(); }, onError);
+    const listen = <K extends keyof typeof parts>(key: K, source: Parameters<typeof onSnapshot>[0], convert: (row: DocumentData) => unknown = row => row) => onSnapshot(source as ReturnType<typeof inClinic>, snap => { parts[key] = rows(snap).map(convert) as (typeof parts)[K]; notify(); }, onError);
     const unsubs = [
       listen("patients", inClinic("patients", clinicId)),
-      listen("recent", since("appointments", "date", clinicId, from)),
+      listen("recent", since("appointments", "date", clinicId, from), toAppointment),
       // A visit nobody resolved stays on the front desk's list, however old it is.
-      listen("unresolved", query(collection(firestore, "appointments"), where("clinicId", "==", clinicId), where("status", "==", "scheduled"), where("date", "<", from))),
+      listen("unresolved", query(collection(firestore, "appointments"), where("clinicId", "==", clinicId), where("status", "==", "scheduled"), where("date", "<", from)), toAppointment),
       listen("reminders", inClinic("reminders", clinicId)),
     ];
     return () => unsubs.forEach(u => u());
@@ -113,13 +119,13 @@ export const firestoreRepository: Repository = {
   subscribePatientHistory(clinicId, patientId, includeRx, onUpdate, onError) {
     let appointments: Appointment[] | null = null, prescriptions: Prescription[] | null = includeRx ? null : [];
     const notify = () => { if (appointments && prescriptions) onUpdate({ appointments, prescriptions }); };
-    const unsubs = [onSnapshot(forPatient("appointments", clinicId, patientId), snap => { appointments = snap.docs.map(d => d.data() as Appointment); notify(); }, onError)];
+    const unsubs = [onSnapshot(forPatient("appointments", clinicId, patientId), snap => { appointments = rows(snap).map(toAppointment); notify(); }, onError)];
     if (includeRx) unsubs.push(onSnapshot(forPatient("prescriptions", clinicId, patientId), snap => { prescriptions = rows(snap).map(toPrescription); notify(); }, onError));
     return () => unsubs.forEach(u => u());
   },
   async loadAppointments(clinicId, from, to) {
     const snap = await getDocs(query(collection(firestore, "appointments"), where("clinicId", "==", clinicId), where("date", ">=", from), where("date", "<=", to)));
-    return snap.docs.map(d => d.data() as Appointment);
+    return rows(snap).map(toAppointment);
   },
   async getPrescription(id) {
     const snap = await getDoc(doc(firestore, "prescriptions", id));
@@ -151,7 +157,13 @@ export const firestoreRepository: Repository = {
   setPrescriptionsEnabled: (clinicId, enabled) => updateDoc(doc(firestore, "clinics", clinicId), { prescriptionsEnabled: enabled, updatedBy: uid() }),
   savePatient: (patient: Patient) => setDoc(doc(firestore, "patients", patient.id), { ...defined(patient), updatedBy: uid(), updatedAt: serverTimestamp() }),
   bookAppointment: appointment => callFunction("bookAppointment", { appointment }),
-  setAppointmentStatus: (appointmentId, status) => updateDoc(doc(firestore, "appointments", appointmentId), { status, updatedBy: uid(), updatedAt: serverTimestamp() }),
+  setAppointmentStatus: (appointmentId, status) => updateDoc(doc(firestore, "appointments", appointmentId), { status, ...(status === "completed" ? { finishedAt: serverTimestamp() } : {}), updatedBy: uid(), updatedAt: serverTimestamp() }),
+  bookWalkIn: appointment => callFunction("bookWalkIn", { appointment }),
+  setVisitStage(appointmentId, stage) {
+    const stamp = { updatedBy: uid(), updatedAt: serverTimestamp() };
+    const change = stage === "arrived" ? { stage, arrivedAt: serverTimestamp() } : stage === "with_doctor" ? { stage, startedAt: serverTimestamp() } : { stage: deleteField(), arrivedAt: deleteField(), startedAt: deleteField() };
+    return updateDoc(doc(firestore, "appointments", appointmentId), { ...change, ...stamp });
+  },
   savePrescription(account, prescription) {
     // The send time, finalising details and stamps are set here or on the server, never carried over from the form.
     const { sentAt: _sentAt, finalizedAt: _finalizedAt, finalizedBy: _finalizedBy, ...rest } = prescription; // eslint-disable-line @typescript-eslint/no-unused-vars
