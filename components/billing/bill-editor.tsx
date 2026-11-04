@@ -1,11 +1,9 @@
-"use client";
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { Plus, Trash2 } from 'lucide-react';
 import { billTotals, closingId, formatMoney, parseRupees, patientAccount, rupeesText, validateBill, type Bill } from '@/lib/billing';
 import { Field, FormError, Select } from '../kit';
 import { PatientPicker } from '../patient-picker';
-import { StaffField, useStaffName } from './money-form';
 import type { BillOptions, Workspace } from '../workspace/types';
 
 type Row = { id: string; description: string; qty: string; price: string; taxRate: string };
@@ -24,7 +22,6 @@ export default function BillEditor({ w, options, onSaved }: { w: Workspace; opti
   });
   const [discountText, setDiscountText] = useState('');
   const [note, setNote] = useState('');
-  const [by, setBy] = useStaffName();
   const [error, setError] = useState('');
   const closed = w.closings.some(c => c.id === closingId(w.clinic.id, w.now.date));
   const totals = billTotals(rows.map(r => ({ qty: Number(r.qty) || 0, unitPrice: money(r.price), taxRate: Number(r.taxRate) || 0 })), money(discountText));
@@ -46,7 +43,7 @@ export default function BillEditor({ w, options, onSaved }: { w: Workspace; opti
         return { id: r.id, description: r.description.trim(), qty, unitPrice: parseRupees(r.price), taxRate };
       });
       const discount = discountText.trim() ? parseRupees(discountText) : 0;
-      const bill: Bill = { id: crypto.randomUUID(), clinicId: w.clinic.id, patientId, doctorId, date: w.now.date, lines, ...billTotals(lines, discount), status: 'active', createdBy: by.trim(), createdAt: new Date().toISOString(), ...(options.appointmentId ? { appointmentId: options.appointmentId } : {}), ...(note.trim() ? { note: note.trim() } : {}) };
+      const bill: Bill = { id: crypto.randomUUID(), clinicId: w.clinic.id, patientId, doctorId, date: w.now.date, lines, ...billTotals(lines, discount), status: 'active', createdBy: w.account.name, createdAt: new Date().toISOString(), ...(options.appointmentId ? { appointmentId: options.appointmentId } : {}), ...(note.trim() ? { note: note.trim() } : {}) };
       validateBill(bill);
       w.repo.saveBill(w.account, bill).catch(e => toast.error(`The bill for ${w.patient(patientId)?.name || 'this patient'} was not saved: ${e.message}`));
       onSaved(bill.id);
@@ -68,10 +65,7 @@ export default function BillEditor({ w, options, onSaved }: { w: Workspace; opti
       </div>)}
       <button type="button" className="btn-link" onClick={() => setRows(list => [...list, fromFee('')])}><Plus size={14} />Add item</button>
     </div>
-    <div className="grid-2">
-      <Field label="Discount (₹)"><input className="input" inputMode="decimal" value={discountText} placeholder="0" onChange={e => setDiscountText(e.target.value)} /></Field>
-      <StaffField w={w} value={by} onChange={setBy} label="Billed by" />
-    </div>
+    <Field label="Discount (₹)" className="w-sm"><input className="input" inputMode="decimal" value={discountText} placeholder="0" onChange={e => setDiscountText(e.target.value)} /></Field>
     <Field label="Note (optional)"><input className="input" value={note} maxLength={500} onChange={e => setNote(e.target.value)} /></Field>
     <dl className="bill-totals">
       <div><dt>Subtotal</dt><dd>{formatMoney(totals.subtotal)}</dd></div>
@@ -81,6 +75,6 @@ export default function BillEditor({ w, options, onSaved }: { w: Workspace; opti
     </dl>
     {credit > 0 && <p className="note note-info">This patient has {formatMoney(credit)} credit. It will be used on this bill automatically.</p>}
     <FormError error={error} />
-    <div className="form-foot"><span className="muted">A saved bill cannot be edited, only voided.</span><button type="button" className="btn btn-primary" onClick={save}>Save bill</button></div>
+    <div className="form-foot"><span className="muted">Billed by {w.account.name}. A saved bill cannot be edited, only voided.</span><button type="button" className="btn btn-primary" onClick={save}>Save bill</button></div>
   </div>;
 }

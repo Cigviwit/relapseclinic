@@ -1,9 +1,8 @@
-"use client";
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { Download, ExternalLink, GripVertical, Plus, Printer, Save, Send, Trash2, X } from 'lucide-react';
+import { CheckCircle2, Download, ExternalLink, FilePenLine, GripVertical, Lock, Plus, Printer, Save, Send, Trash2, X } from 'lucide-react';
 import { dateLabel } from '@/lib/clinic';
-import { blankMedicine, cleanPrescription, dayPresets, followUpPresets, frequencies, medicineInstruction, prescriptionMessage, timings, validatePrescription, whatsappUrl, type Medicine, type Prescription } from '@/lib/prescription';
+import { amendPrescription, blankMedicine, cleanPrescription, dayPresets, followUpPresets, frequencies, medicineInstruction, prescriptionMessage, timings, validatePrescription, whatsappUrl, type Medicine, type Prescription } from '@/lib/prescription';
 import { padFor, specialties, type Specialty } from '@/lib/rx-templates';
 import { elementToPdf, toBase64 } from '@/lib/pdf';
 import { patientLanguage } from '@/lib/patient-language';
@@ -24,7 +23,11 @@ export default function PrescriptionBuilder({ w, initial, onClose }: { w: Worksp
   const [preview, setPreview] = useState<'pad' | 'whatsapp'>('pad');
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState('');
-  const isSaved = w.prescriptions.some(p => p.id === rx.id);
+  // A prescription older than the live window is not in w.prescriptions, but only a saved one has createdAt.
+  const isSaved = !!rx.createdAt || w.prescriptions.some(p => p.id === rx.id);
+  const isFinal = rx.status === 'final';
+  const canWrite = w.can.writeRx && (w.account.role !== 'doctor' || rx.doctorId === w.account.doctorId);
+  const locked = isFinal || !canWrite;
   const nameRefs = useRef(new Map<string, HTMLInputElement>());
   const exportRef = useRef<HTMLDivElement>(null);
   const focusMed = useRef<string | null>(null);
@@ -50,41 +53,59 @@ export default function PrescriptionBuilder({ w, initial, onClose }: { w: Worksp
   }, [w.prescriptions, preset]);
   const lastForPatient = useMemo(() => w.prescriptions.filter(p => p.patientId === rx.patientId && p.id !== rx.id).sort((a, b) => (b.date + b.createdAt).localeCompare(a.date + a.createdAt))[0], [w.prescriptions, rx.patientId, rx.id]);
   const lang = patientLanguage(patient?.language);
-  const record = usePatientRecord(w.repo, w.clinic.id, w.clinicalAccess ? rx.patientId : '');
+  const record = usePatientRecord(w.repo, w.clinic.id, w.can.readRecords ? rx.patientId : '');
   // New drafts start from the patient's record. Doesn't mark the draft dirty: nothing has been typed yet.
   const prefilled = useRef(emptyPrefill);
   useEffect(() => {
-    if (isSaved || record.status !== 'ready') return;
+    if (isSaved || locked || rx.amends || record.status !== 'ready') return;
     const next = rxPrefill(record.value, rx.date);
     const previous = prefilled.current; prefilled.current = next;
     setRx(x => applyRxPrefill(x, previous, next));
-  }, [record, isSaved, rx.date]);
+  }, [record, isSaved, locked, rx.amends, rx.date]);
 
   /** Chips add or remove one entry in a text field; separator is ", " for short lists, newline for steps. */
   const entries = (field: TextField, sep: string) => rx[field].split(sep === '\n' ? '\n' : /,\s*/).map(s => s.trim()).filter(Boolean);
   const toggle = (field: TextField, value: string, sep = '\n') => { const list = entries(field, sep); set({ [field]: (list.includes(value) ? list.filter(v => v !== value) : [...list, value]).join(sep) }); };
   const chips = (field: TextField, options: string[], sep = '\n') => options.length > 0 && <div className="chips chips-xs">{options.map(o => <button type="button" key={o} className={'chip' + (entries(field, sep).includes(o) ? ' on' : '')} onClick={() => toggle(field, o, sep)}>{o}</button>)}</div>;
 
-  function finalize(sent: boolean) {
+  /** The checked prescription with the given status. Already-final ones stay exactly as they are. */
+  function prepared(status: Prescription['status']) {
+    if (isFinal) return rx;
     validatePrescription(rx, w.patients, w.clinic.doctors);
-    const now = new Date().toISOString();
-    return cleanPrescription({ ...rx, createdAt: rx.createdAt || now, sentAt: sent ? now : rx.sentAt });
+    return cleanPrescription({ ...rx, status, createdAt: rx.createdAt || new Date().toISOString() });
   }
-  async function persist(clean: Prescription) { await w.repo.savePrescription(clean); setRx(clean); setDirty(false); }
+  /** Printing or sending a draft finalises it first, so what a patient holds always matches the record. */
+  function forPatient() {
+    if (!isFinal && !canWrite) throw new Error('This draft has not been finalised by the doctor yet.');
+    return prepared('final');
+  }
+  async function persist(clean: Prescription) {
+    if (clean.status === 'final' && isFinal) return;
+    await w.repo.savePrescription(w.account, clean);
+    setRx({ ...clean, finalizedBy: clean.status === 'final' ? w.account.name : undefined });
+    setDirty(false);
+  }
   async function run(label: string, task: () => Promise<void>) {
-    if (busy) return;
+    if (busy) return false;
     setBusy(label);
-    try { await task(); } catch (e) { setError((e as Error).message); toast.error((e as Error).message); } finally { setBusy(''); }
+    try { await task(); return true; } catch (e) { setError((e as Error).message); toast.error((e as Error).message); return false; } finally { setBusy(''); }
   }
   const pdf = () => elementToPdf(exportRef.current!.firstElementChild as HTMLElement, pad.paper);
   const fileName = () => `Prescription ${patient?.name || ''} ${rx.date}.pdf`.replace(/[^\w .-]+/g, '').replace(/\s+/g, '-');
 
-  function save() { try { const clean = finalize(false); void run('Saving…', async () => { await persist(clean); toast.success('Prescription saved'); }); } catch (e) { setError((e as Error).message); } }
+  function save() { try { if (locked) return; const clean = prepared('draft'); void run('Saving…', async () => { await persist(clean); toast.success('Draft saved'); }); } catch (e) { setError((e as Error).message); } }
+  function finish() { try { const clean = forPatient(); void run('Finalising…', async () => { await persist(clean); toast.success('Prescription finalised'); }); } catch (e) { setError((e as Error).message); } }
+  function amend() { if (dirty && !window.confirm('Discard unsaved changes to this prescription?')) return; w.writeRx({ item: amendPrescription(rx, w.now.date) }); }
+  async function viewOriginal() {
+    try { const original = rx.amends ? await w.repo.getPrescription(rx.amends) : null; if (original) w.writeRx({ item: original }); else toast.error('The original prescription could not be found.'); }
+    catch (e) { toast.error((e as Error).message); }
+  }
   function send() {
     let clean: Prescription;
     try {
-      clean = finalize(false);
+      clean = forPatient();
       if (!patient) throw new Error('Choose the patient first.');
+      if (!w.can.sendRx) throw new Error('Your role cannot send prescriptions.');
       if (!patient.consent) throw new Error(`${patient.name} has not agreed to WhatsApp messages. Record consent in their profile, or use “My WhatsApp”.`);
     } catch (e) { setError((e as Error).message); return; }
     void run('Preparing PDF…', async () => {
@@ -94,12 +115,13 @@ export default function PrescriptionBuilder({ w, initial, onClose }: { w: Worksp
       const result = await w.repo.sendPrescription(clean.id, toBase64(file), fileName());
       if (result.status !== 'accepted') throw new Error(result.error || 'WhatsApp could not confirm the message. Check Messages before sending again.');
       setRx(x => ({ ...x, sentAt: new Date().toISOString() }));
+      setDirty(false);
       toast.success(`Prescription sent to ${patient!.name} on WhatsApp`);
     });
   }
   function sendFromMyWhatsapp() {
     try {
-      const clean = finalize(true);
+      const clean = forPatient();
       if (!patient) throw new Error('Choose the patient first.');
       // Open WhatsApp synchronously inside the click so pop-up blockers allow it.
       window.open(whatsappUrl(patient.phone, prescriptionMessage(clean, w.clinic, patient, doctor)), '_blank', 'noopener');
@@ -107,13 +129,21 @@ export default function PrescriptionBuilder({ w, initial, onClose }: { w: Worksp
     } catch (e) { setError((e as Error).message); }
   }
   function download() {
+    let clean: Prescription;
+    try { clean = forPatient(); } catch (e) { setError((e as Error).message); return; }
     void run('Preparing PDF…', async () => {
+      await persist(clean);
       const url = URL.createObjectURL(new Blob([await pdf() as BlobPart], { type: 'application/pdf' }));
       const a = Object.assign(document.createElement('a'), { href: url, download: fileName() });
       a.click(); setTimeout(() => URL.revokeObjectURL(url), 5000);
     });
   }
   function print() {
+    let clean: Prescription;
+    try { clean = forPatient(); } catch (e) { setError((e as Error).message); return; }
+    void run('Finalising…', () => persist(clean)).then(ok => { if (ok) printNow(); });
+  }
+  function printNow() {
     const node = exportRef.current?.firstElementChild; if (!node) return;
     const frame = document.createElement('iframe');
     frame.style.cssText = 'position:fixed;width:0;height:0;border:0;right:0;bottom:0';
@@ -140,29 +170,35 @@ export default function PrescriptionBuilder({ w, initial, onClose }: { w: Worksp
 
   return <div className="rxb">
     <header className="rxb-head">
-      <div className="rxb-title"><h2>{isSaved ? 'Prescription' : 'New prescription'}</h2><small>{patient ? `${patient.name} · ${dateLabel(rx.date, { day: 'numeric', month: 'short', year: 'numeric' })}` : 'Choose a patient to begin'}{rx.sentAt ? ' · sent' : dirty && isSaved ? ' · unsaved changes' : ''}</small></div>
+      <div className="rxb-title"><h2>{rx.amends && !isFinal ? 'Amending prescription' : isSaved ? 'Prescription' : 'New prescription'}</h2><small>{patient ? `${patient.name} · ${dateLabel(rx.date, { day: 'numeric', month: 'short', year: 'numeric' })}` : 'Choose a patient to begin'}{isFinal ? ' · final' : ' · draft'}{rx.sentAt ? ' · sent' : dirty && isSaved ? ' · unsaved changes' : ''}</small></div>
       <div className="rxb-actions">
         <button className="btn btn-ghost" onClick={print} title="Print (Ctrl+P)"><Printer size={16} /><span>Print</span></button>
         <button className="btn btn-ghost" onClick={download} disabled={!!busy} title="Download PDF"><Download size={16} /><span>PDF</span></button>
+        {isFinal && w.can.writeRx && canWrite && <button className="btn btn-outline" onClick={amend} disabled={!!busy} title="Make a corrected copy. This one stays on record."><FilePenLine size={16} /><span>Amend</span></button>}
         <button className="btn btn-ghost" onClick={sendFromMyWhatsapp} disabled={!!busy || !patient} title="Open WhatsApp on this computer with the prescription as text"><ExternalLink size={16} /><span>My WhatsApp</span></button>
-        <button className="btn btn-outline" onClick={save} disabled={!!busy} title="Save (Ctrl+S)"><Save size={16} /><span>Save</span></button>
-        <button className="btn btn-wa" onClick={send} disabled={!!busy || !patient} title="Send the PDF from the clinic’s WhatsApp number (Ctrl+Enter)"><Send size={16} /><span>{busy || (rx.sentAt ? 'Send again' : 'Send on WhatsApp')}</span></button>
+        {!locked && <button className="btn btn-outline" onClick={save} disabled={!!busy} title="Save draft (Ctrl+S)"><Save size={16} /><span>Save draft</span></button>}
+        {!locked && <button className="btn btn-primary" onClick={finish} disabled={!!busy || !patient} title="Lock this prescription under your name"><CheckCircle2 size={16} /><span>Finalise</span></button>}
+        {w.can.sendRx && <button className="btn btn-wa" onClick={send} disabled={!!busy || !patient} title="Send the PDF from the clinic’s WhatsApp number (Ctrl+Enter)"><Send size={16} /><span>{busy || (rx.sentAt ? 'Send again' : 'Send on WhatsApp')}</span></button>}
         <button className="btn-icon" aria-label="Close" onClick={close}><X size={20} /></button>
       </div>
     </header>
 
     <div className="rxb-body">
       <div className="rxb-form">
+        {isFinal && <p className="note note-info row-tight"><Lock size={15} /><span>Final{rx.finalizedBy ? `, by ${rx.finalizedBy}` : ''}. It cannot be changed. {canWrite ? 'Use Amend to make a corrected copy.' : ''}</span></p>}
+        {!isFinal && !canWrite && <p className="note note-warn row-tight"><Lock size={15} /><span>This is a draft by the doctor. You can read it, but it cannot be printed or sent until it is finalised.</span></p>}
+        {rx.amends && <p className="note row-between"><span>This replaces an earlier prescription, which stays on record.</span><button type="button" className="btn btn-sm btn-ghost" onClick={() => void viewOriginal()}>View original</button></p>}
+        <fieldset className="rxb-fields" disabled={locked}>
         <section className="rxb-sec">
           <div className="grid-rx-top">
             <Field label="Patient"><PatientPicker patients={w.patients} value={rx.patientId} onChange={patientId => set({ patientId })} onCreate={w.savePatient} clinicId={w.clinic.id} autoFocus={!rx.patientId} /></Field>
-            <Field label="Doctor"><Select label="Doctor" value={rx.doctorId} onChange={doctorId => { const d = w.doctor(doctorId); set({ doctorId, ...(d?.padSpecialty && !isSaved ? { specialty: d.padSpecialty } : {}) }); }} options={w.clinic.doctors.map(d => ({ value: d.id, label: d.name }))} /></Field>
+            <Field label="Doctor"><Select label="Doctor" className={w.account.role === 'doctor' ? 'is-fixed' : ''} value={rx.doctorId} onChange={doctorId => { const d = w.doctor(doctorId); set({ doctorId, ...(d?.padSpecialty && !isSaved ? { specialty: d.padSpecialty } : {}) }); }} options={w.clinic.doctors.filter(d => w.account.role !== 'doctor' || d.id === w.account.doctorId || d.id === rx.doctorId).map(d => ({ value: d.id, label: d.name }))} /></Field>
             <Field label="Date"><input className="input" type="date" value={rx.date} onChange={e => set({ date: e.target.value })} /></Field>
             <Field label="Pad"><Select label="Prescription pad" value={rx.specialty} onChange={v => set({ specialty: v as Specialty })} options={Object.entries(specialties).map(([value, s]) => ({ value, label: s.label }))} /></Field>
           </div>
           {lastForPatient && !isSaved && rx.medicines.every(m => !m.name) && <div className="note note-info row-between"><span>Last visit {dateLabel(lastForPatient.date, { day: 'numeric', month: 'short' })}: {lastForPatient.diagnosis || lastForPatient.medicines.map(m => m.name).join(', ')}{lastForPatient.teeth?.length ? ` · teeth ${lastForPatient.teeth.join(', ')}` : ''}</span>
             <button className="btn btn-sm btn-soft" onClick={() => set({ history: lastForPatient.history, diagnosis: lastForPatient.diagnosis, plan: lastForPatient.plan, teeth: lastForPatient.teeth || [], medicines: lastForPatient.medicines.map(m => ({ ...m, id: crypto.randomUUID() })), advice: lastForPatient.advice })}>Copy forward</button></div>}
-          {rx.patientId && (w.clinicalAccess ? <AllergyBanner live={record} compact /> : <p className="note note-warn">Allergies are private to the clinic and hidden from administrator accounts. Check with the clinic before prescribing.</p>)}
+          {rx.patientId && w.can.readRecords && <AllergyBanner live={record} compact />}
           <div className="grid-vitals">
             <Field label="Age"><input className="input" inputMode="numeric" maxLength={3} value={rx.age} onChange={e => set({ age: e.target.value.replace(/\D/g, '') })} placeholder="yrs" /></Field>
             <Field label="Sex"><Select label="Sex" value={rx.sex} onChange={v => set({ sex: v as Prescription['sex'] })} options={[{ value: '', label: '—' }, { value: 'M', label: 'Male' }, { value: 'F', label: 'Female' }, { value: 'O', label: 'Other' }]} /></Field>
@@ -217,8 +253,9 @@ export default function PrescriptionBuilder({ w, initial, onClose }: { w: Worksp
           </div>
           {rx.followUp && patient && <button className="btn btn-sm btn-ghost" onClick={() => w.book({ patientId: patient.id, doctorId: rx.doctorId, date: rx.followUp })}>Book the next visit now →</button>}
         </section>
+        </fieldset>
         {error && <p className="form-error" role="alert">{error}</p>}
-        <p className="shortcut-hint"><Kbd>Ctrl</Kbd>+<Kbd>S</Kbd> save · <Kbd>Ctrl</Kbd>+<Kbd>Enter</Kbd> send on WhatsApp · <Kbd>Ctrl</Kbd>+<Kbd>P</Kbd> print</p>
+        <p className="shortcut-hint"><Kbd>Ctrl</Kbd>+<Kbd>S</Kbd> save draft · <Kbd>Ctrl</Kbd>+<Kbd>Enter</Kbd> send on WhatsApp · <Kbd>Ctrl</Kbd>+<Kbd>P</Kbd> print</p>
       </div>
 
       <aside className="rxb-preview">

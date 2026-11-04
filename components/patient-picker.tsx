@@ -1,4 +1,3 @@
-"use client";
 import { useId, useMemo, useRef, useState } from 'react';
 import { Search, UserPlus, X } from 'lucide-react';
 import { normalizePhone, type Patient } from '@/lib/clinic';

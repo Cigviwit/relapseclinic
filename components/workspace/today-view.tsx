@@ -1,4 +1,3 @@
-"use client";
 import { Fragment, useMemo } from 'react';
 import { AlertTriangle, CalendarPlus, Check, ChevronRight, Clock, FileText, IndianRupee, Phone, UserX } from 'lucide-react';
 import { addDays, clockLabel, dateLabel, minutes, type Appointment } from '@/lib/clinic';
@@ -41,12 +40,12 @@ export default function TodayView({ w }: { w: Workspace }) {
       <div className="q-actions">
         {a.status === 'scheduled' && <button className="btn btn-sm btn-soft" onClick={() => w.setStatus(a, 'completed')} title="Mark as seen"><Check size={15} /><span>Seen</span></button>}
         {a.status === 'scheduled' && ended && <button className="btn btn-sm btn-ghost" onClick={() => w.confirmMissed(a)} title="Mark as missed"><UserX size={15} /><span>Missed</span></button>}
-        {w.clinic.prescriptionsEnabled && a.status !== 'cancelled' && a.status !== 'missed' && (rx
+        {w.rxOn && a.status !== 'cancelled' && a.status !== 'missed' && (rx
           ? <button className="btn btn-sm btn-ghost" onClick={() => w.writeRx({ item: rx })} title="View prescription"><FileText size={15} /><span>Rx{rx.sentAt ? ' ✓' : ''}</span></button>
-          : <button className="btn btn-sm btn-ghost" onClick={() => w.writeRx({ patientId: a.patientId, doctorId: a.doctorId, appointmentId: a.id })} title="Write prescription"><FileText size={15} /><span>Rx</span></button>)}
+          : w.can.writeRx && <button className="btn btn-sm btn-ghost" onClick={() => w.writeRx({ patientId: a.patientId, doctorId: a.doctorId, appointmentId: a.id })} title="Write prescription"><FileText size={15} /><span>Rx</span></button>)}
         {w.billingOn && a.status !== 'cancelled' && a.status !== 'missed' && (bill
           ? <button className="btn btn-sm btn-ghost" onClick={() => w.openBill(bill.id)} title="Open bill"><IndianRupee size={15} /><span>Bill ✓</span></button>
-          : <button className="btn btn-sm btn-ghost" onClick={() => w.newBill({ patientId: a.patientId, doctorId: a.doctorId, appointmentId: a.id, reason: a.reason })} title="Make bill"><IndianRupee size={15} /><span>Bill</span></button>)}
+          : w.can.writeBilling && <button className="btn btn-sm btn-ghost" onClick={() => w.newBill({ patientId: a.patientId, doctorId: a.doctorId, appointmentId: a.id, reason: a.reason })} title="Make bill"><IndianRupee size={15} /><span>Bill</span></button>)}
       </div>
     </div>;
   };
@@ -86,7 +85,7 @@ export default function TodayView({ w }: { w: Workspace }) {
           {(() => { const p = w.patient(next.patientId); return <>
             <div className="next-who"><Avatar name={p?.name || '?'} size="lg" /><div><strong>{p?.name}</strong><small>{next.reason}</small><small>{w.doctorName(next.doctorId)}</small></div></div>
             <div className="next-actions">
-              {w.clinic.prescriptionsEnabled && <button className="btn btn-primary" onClick={() => w.writeRx({ patientId: next.patientId, doctorId: next.doctorId, appointmentId: next.id })}><FileText size={16} />Write Rx</button>}
+              {w.rxOn && w.can.writeRx && <button className="btn btn-primary" onClick={() => w.writeRx({ patientId: next.patientId, doctorId: next.doctorId, appointmentId: next.id })}><FileText size={16} />Write Rx</button>}
               <button className="btn btn-soft" onClick={() => w.setStatus(next, 'completed')}><Check size={16} />Seen</button>
               {p && <a className="btn btn-ghost" href={`tel:${p.phone}`}><Phone size={16} />Call</a>}
             </div>

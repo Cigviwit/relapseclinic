@@ -1,12 +1,14 @@
-"use client";
-import { lazy, Suspense, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { BarChart3, CalendarDays, CalendarPlus, FileText, Home, IndianRupee, LogOut, MessageCircle, Search, Settings, Users } from 'lucide-react';
 import { Toaster, toast } from 'sonner';
-import { type Appointment, type Database, type Patient, clockLabel, initials, validateAppointment, zonedNow } from '@/lib/clinic';
-import { firestoreRepository, type DoctorDigestDelivery, type MessageDelivery, type Repository } from '@/lib/firestore-repository';
+import { type Appointment, type Clinic, type Database, type Patient, clockLabel, initials, validateAppointment, zonedNow } from '@/lib/clinic';
+import { firestoreRepository, type ClinicData, type DoctorDigestDelivery, type MessageDelivery, type Repository } from '@/lib/firestore-repository';
 import { createDemoRepository, demoAccount, isDemoMode } from '@/lib/demo-repository';
+import { historyStart, mergeById } from '@/lib/data-window';
+import { permissionsFor, roleLabel } from '@/lib/permissions';
+import { IdleLock } from './idle-lock';
 import { authService, getAccount, type Account } from '@/lib/auth-service';
-import { blankPrescription, repeatPrescription, withDefaults, type Prescription } from '@/lib/prescription';
+import { blankPrescription, currentPrescriptions, repeatPrescription, withDefaults, type Prescription } from '@/lib/prescription';
 import { unresolvedVisits } from '@/lib/unresolved';
 import type { Bill, DayClosing, LedgerEntry } from '@/lib/billing';
 import AuthView from '@/components/auth/auth-view';
@@ -45,6 +47,7 @@ const subscribeHash = (fn: () => void) => { window.addEventListener('hashchange'
 const useHash = () => useSyncExternalStore(subscribeHash, () => location.hash, () => '');
 const setHash = (p: Page, id?: string) => { location.hash = '#' + p + (id ? '/' + id : ''); };
 const noSubscribe = () => () => {};
+const PATIENT_SAVE_WAIT_MS = 4000;
 
 function Splash({ text }: { text: string }) {
   return <div className="splash"><Logo /><div className="splash-bar"><i /></div><p>{text}</p></div>;
@@ -55,9 +58,11 @@ export default function ClinicApp() {
   const repo = useMemo<Repository>(() => demo ? createDemoRepository() : firestoreRepository, [demo]);
   const [signedIn, setAccount] = useState<Account | null>(null);
   const [authPending, setAuthChecking] = useState(true);
-  const account = demo ? demoAccount : signedIn;
+  const account = useMemo(() => demo ? demoAccount() : signedIn, [demo, signedIn]);
   const authChecking = !demo && authPending;
-  const [db, setDb] = useState<Database | null>(null);
+  const [clinics, setClinics] = useState<Clinic[] | null>(null);
+  const [clinicData, setClinicData] = useState<{ clinicId: string; data: ClinicData } | null>(null);
+  const [olderAppointments, setOlderAppointments] = useState<Appointment[]>([]);
   const [deliveries, setDeliveries] = useState<MessageDelivery[]>([]);
   const [digests, setDigests] = useState<DoctorDigestDelivery[]>([]);
   const [prescriptions, setPrescriptions] = useState<Prescription[]>([]);
@@ -84,7 +89,7 @@ export default function ClinicApp() {
   useEffect(() => {
     if (demo) return;
     return authService.subscribeAuthState(async user => {
-      if (!user) { setAccount(null); setDb(null); setAuthChecking(false); return; }
+      if (!user) { setAccount(null); setClinics(null); setClinicData(null); setAuthChecking(false); return; }
       try { setAccount(await getAccount(user)); setLoadError(''); }
       catch (error) { setLoadError((error as Error).message); setAccount(null); }
       finally { setAuthChecking(false); }
@@ -93,30 +98,58 @@ export default function ClinicApp() {
 
   useEffect(() => {
     if (!account) return;
+    const timer = setInterval(() => setTick(t => t + 1), 30000);
+    const unsub = repo.subscribeClinics(account, setClinics, e => setLoadError(e.message));
+    return () => { unsub(); clearInterval(timer); };
+  }, [account, repo]);
+
+  const clinic = clinics ? clinics.find(c => c.id === (account?.role === 'platform' ? selectedClinicId : account?.clinicId)) || (account?.role === 'platform' ? clinics[0] : undefined) : undefined;
+  const clinicId = clinic?.id || '';
+  const now = clinic ? zonedNow(clinic.timezone) : { date: '', time: '' };
+  const can = useMemo(() => permissionsFor(account?.role || 'billing'), [account?.role]);
+  const rxOn = clinic?.prescriptionsEnabled === true && can.readRx;
+  const billingOn = clinic?.billingEnabled === true && can.readBilling;
+  const navPages = pages.filter(p => (p.id !== 'rx' || rxOn) && (p.id !== 'billing' || billingOn));
+  const page = (navPages.some(p => p.id === hashPage) ? hashPage : 'today') as Page;
+  // Fixed for the session, so the live listeners are not rebuilt as the clock ticks.
+  const from = useMemo(() => clinicId && clinic ? historyStart(zonedNow(clinic.timezone).date) : '', [clinicId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const loadedRanges = useRef(new Set<string>());
+  // Only the clinic on screen is listened to, including for the platform administrator.
+  useEffect(() => {
+    if (!clinicId || !from) return;
     const onError = (e: Error) => setLoadError(e.message);
     const unsubs = [
-      repo.subscribeDatabase(account, next => { setDb(next); setLoadError(''); }, onError),
-      repo.subscribeDeliveries(account, setDeliveries, onError),
-      repo.subscribeDoctorDigests(account, setDigests, onError),
-      // Prescriptions are optional: if the rules are not deployed yet, the rest of the app still works.
-      repo.subscribePrescriptions(account, setPrescriptions, e => console.warn('Prescriptions unavailable:', e.message)),
-      // Billing is private to the clinic, so the rules refuse these to the platform admin.
-      ...(demo || account.role !== 'admin' ? [
-        repo.subscribeBills(account, setBills, e => console.warn('Billing unavailable:', e.message)),
-        repo.subscribeLedger(account, setLedger, e => console.warn('Billing unavailable:', e.message)),
-        repo.subscribeDayClosings(account, setClosings, e => console.warn('Billing unavailable:', e.message)),
-      ] : []),
+      repo.subscribeClinicData(clinicId, from, data => { setClinicData({ clinicId, data }); setLoadError(''); }, onError),
+      repo.subscribeDeliveries(clinicId, from, setDeliveries, onError),
+      repo.subscribeDoctorDigests(clinicId, from, setDigests, onError),
     ];
-    const timer = setInterval(() => setTick(t => t + 1), 30000);
-    return () => { unsubs.forEach(u => u()); clearInterval(timer); };
-  }, [account, repo, demo]);
+    const ranges = loadedRanges.current;
+    return () => { unsubs.forEach(u => u()); setOlderAppointments([]); ranges.clear(); };
+  }, [repo, clinicId, from]);
+  useEffect(() => {
+    if (!clinicId || !from || !rxOn) { setPrescriptions([]); return; }
+    return repo.subscribePrescriptions(clinicId, from, setPrescriptions, e => console.warn('Prescriptions unavailable:', e.message));
+  }, [repo, clinicId, from, rxOn]);
+  useEffect(() => {
+    if (!clinicId || !billingOn) { setBills([]); setLedger([]); setClosings([]); return; }
+    const onError = (e: Error) => console.warn('Billing unavailable:', e.message);
+    const unsubs = [repo.subscribeBills(clinicId, setBills, onError), repo.subscribeLedger(clinicId, setLedger, onError), repo.subscribeDayClosings(clinicId, setClosings, onError)];
+    return () => unsubs.forEach(u => u());
+  }, [repo, clinicId, billingOn]);
 
-  const clinic = db ? db.clinics.find(c => c.id === (account?.role === 'admin' ? selectedClinicId : account?.clinicId)) || db.clinics[0] : undefined;
-  const now = clinic ? zonedNow(clinic.timezone) : { date: '', time: '' };
-  const rxEnabled = clinic?.prescriptionsEnabled === true;
-  const billingOn = clinic?.billingEnabled === true && (demo || account?.role !== 'admin');
-  const navPages = pages.filter(p => (p.id !== 'rx' || rxEnabled) && (p.id !== 'billing' || billingOn));
-  const page = (navPages.some(p => p.id === hashPage) ? hashPage : 'today') as Page;
+  const loadRange = useCallback((rangeFrom: string, rangeTo: string) => {
+    if (!clinicId || !from || rangeFrom >= from) return;
+    const key = `${rangeFrom}_${rangeTo}`;
+    if (loadedRanges.current.has(key)) return;
+    loadedRanges.current.add(key);
+    repo.loadAppointments(clinicId, rangeFrom, rangeTo).then(list => setOlderAppointments(x => mergeById(x, list))).catch(e => { loadedRanges.current.delete(key); toast.error((e as Error).message); });
+  }, [repo, clinicId, from]);
+
+  const live = clinicData && clinicData.clinicId === clinicId ? clinicData.data : null;
+  const db = useMemo<Database | null>(() => clinics && (live || !clinicId) ? { version: 1, activeClinicId: clinicId, clinics, patients: live?.patients || [], appointments: mergeById(olderAppointments, live?.appointments || []), reminders: live?.reminders || [] } : null, [clinics, live, clinicId, olderAppointments]);
+  // Booking waits for a patient added moments earlier in the same form.
+  const patientSave = useRef<Promise<unknown>>(Promise.resolve());
 
   const scoped = useMemo(() => {
     if (!db || !clinic) return null;
@@ -128,18 +161,20 @@ export default function ClinicApp() {
       appointments: db.appointments.filter(a => a.clinicId === clinic.id),
       deliveries: deliveries.filter(d => d.clinicId === clinic.id),
       digests: digests.filter(d => d.clinicId === clinic.id),
-      prescriptions: clinic.prescriptionsEnabled ? prescriptions.filter(r => r.clinicId === clinic.id).map(withDefaults) : [],
+      prescriptions: rxOn ? currentPrescriptions(prescriptions.filter(r => r.clinicId === clinic.id).map(withDefaults)) : [],
       bills: bills.filter(b => b.clinicId === clinic.id),
       ledger: ledger.filter(e => e.clinicId === clinic.id),
       closings: closings.filter(c => c.clinicId === clinic.id),
     };
-  }, [db, clinic, deliveries, digests, prescriptions, bills, ledger, closings]);
+  }, [db, clinic, rxOn, deliveries, digests, prescriptions, bills, ledger, closings]);
 
   const go = (p: Page, pid?: string) => { setHash(p, pid); setDetail(null); };
 
   // Single-key shortcuts for the front desk; ignored while typing or when a dialog is open.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // A locked screen must not open anything on top of itself.
+      if (document.querySelector('.lock-screen[open]')) return;
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setPalette(true); return; }
       const t = e.target as HTMLElement;
       if (e.ctrlKey || e.metaKey || e.altKey || t.closest('input,textarea,select,[contenteditable]') || document.querySelector('dialog[open]')) return;
@@ -147,12 +182,12 @@ export default function ClinicApp() {
       if (k === '/') { e.preventDefault(); setPalette(true); }
       else if (k === 'n') { e.preventDefault(); setBooking({}); }
       else if (k === 'p') { e.preventDefault(); setPatientModal({}); }
-      else if (k === 'r' && clinic?.prescriptionsEnabled) { e.preventDefault(); setRxDraft(blankPrescription(clinic, now.date)); }
-      else if (k === 'b' && billingOn) { e.preventDefault(); setBillDraft({}); }
+      else if (k === 'r' && clinic && rxOn && can.writeRx) { e.preventDefault(); setRxDraft(blankPrescription(clinic, now.date, '', account?.doctorId || '')); }
+      else if (k === 'b' && billingOn && can.writeBilling) { e.preventDefault(); setBillDraft({}); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [clinic, now.date, billingOn]);
+  }, [clinic, now.date, billingOn, rxOn, can, account?.doctorId]);
 
   useEffect(() => {
     const context = (document as Document & { modelContext?: { registerTool: (t: unknown, o: unknown) => void } }).modelContext;
@@ -169,32 +204,45 @@ export default function ClinicApp() {
   if (authChecking) return <Splash text="Signing you in…" />;
   if (!account) return <><Toaster position="top-center" richColors /><AuthView error={loadError} /></>;
   if (!db && loadError) return <div className="splash" role="alert"><Logo /><p>{loadError}</p><button className="btn btn-outline" onClick={() => authService.signOut()}>Sign out</button></div>;
-  if (!db) return <Splash text="Loading your clinic…" />;
-  if (!clinic || !scoped) return <><Toaster position="top-center" richColors /><div className="first-run"><Logo /><h1>Create the first clinic</h1><p className="muted">No clinics yet. Set up a clinic and its login.</p><Suspense fallback={null}><AdminCreateClinic onCreated={() => {}} /></Suspense><button className="btn btn-ghost" onClick={() => authService.signOut()}>Sign out</button></div></>;
+  if (clinics && !clinic && account.role !== 'platform') return <div className="splash" role="alert"><Logo /><p>This login’s clinic could not be found. Contact your clinic owner.</p><button className="btn btn-outline" onClick={() => authService.signOut()}>Sign out</button></div>;
+  if (clinics && !clinic) return <><Toaster position="top-center" richColors /><div className="first-run"><Logo /><h1>Create the first clinic</h1><p className="muted">No clinics yet. Set up a clinic and its owner’s login.</p><Suspense fallback={null}><AdminCreateClinic repo={repo} onCreated={() => {}} /></Suspense><button className="btn btn-ghost" onClick={() => authService.signOut()}>Sign out</button></div></>;
+  if (!db || !clinic || !scoped) return <Splash text="Loading your clinic…" />;
 
   async function setStatus(a: Appointment, status: Appointment['status']) {
     try {
-      const updated = { ...a, status };
-      if (status === 'scheduled') validateAppointment(db!, updated);
-      await repo.saveAppointment(updated);
+      await repo.setAppointmentStatus(a.id, status);
+      // Visits loaded from further back are not live, so the copy on screen is updated by hand.
+      setOlderAppointments(list => list.map(x => x.id === a.id ? { ...x, status } : x));
       toast.success(status === 'completed' ? `${scoped!.byId.get(a.patientId)?.name || 'Visit'} marked seen` : status === 'missed' ? 'Marked missed — follow-up will be sent if consented' : `Appointment ${status}`);
     } catch (e) { toast.error((e as Error).message); }
   }
-  function saveAppointment(a: Appointment) {
+  /** Waits for the server: only it can say the slot is still free. A refusal stays in the form, which remains open. */
+  async function saveAppointment(a: Appointment) {
     validateAppointment(db!, a);
-    repo.saveAppointment(a).catch(e => toast.error(e.message));
+    // Offline, that save never finishes, so wait only briefly: the server gives the clear answer either way.
+    await Promise.race([patientSave.current.catch(() => {}), new Promise(resolve => setTimeout(resolve, PATIENT_SAVE_WAIT_MS))]);
+    await repo.bookAppointment(a);
     toast.success(`Booked ${scoped!.byId.get(a.patientId)?.name || ''} · ${clockLabel(a.time)}`);
     setBooking(null); setDetail(null);
   }
-  function savePatient(p: Patient) { repo.savePatient(p).then(() => toast.success('Patient saved')).catch(e => toast.error(e.message)); }
+  function savePatient(p: Patient) {
+    const saving = repo.savePatient(p);
+    patientSave.current = saving;
+    saving.then(() => toast.success('Patient saved')).catch(e => toast.error(e.message));
+  }
 
   const w: Workspace = {
-    account, db, clinic, repo, now, doctorFilter, setDoctorFilter, clinicalAccess: demo || account.role !== 'admin',
+    account, db, clinic, repo, now, doctorFilter, setDoctorFilter, can, rxOn, loadRange,
     patients: scoped.patients, appointments: scoped.appointments, deliveries: scoped.deliveries, digests: scoped.digests, prescriptions: scoped.prescriptions,
     patient: id => scoped.byId.get(id), doctor: id => scoped.doctors.get(id), doctorName: id => scoped.doctors.get(id)?.name || 'Doctor',
     go, book: o => { setDetail(null); setBooking(o || {}); }, openAppointment: setDetail,
     editPatient: p => setPatientModal({ item: p }), savePatient,
-    writeRx: (o: RxOptions = {}) => { setDetail(null); setRxDraft(o.item || (o.repeat ? repeatPrescription(o.repeat, now.date, o.doctorId, o.appointmentId) : blankPrescription(clinic, now.date, o.patientId, o.doctorId || (doctorFilter !== 'all' ? doctorFilter : ''), o.appointmentId))); },
+    writeRx: (o: RxOptions = {}) => {
+      // A doctor writes under their own name, whichever doctor the visit was booked with.
+      const own = account.role === 'doctor' ? account.doctorId : '';
+      setDetail(null);
+      setRxDraft(o.item || (o.repeat ? repeatPrescription(o.repeat, now.date, own || o.doctorId, o.appointmentId) : blankPrescription(clinic, now.date, o.patientId, own || o.doctorId || (doctorFilter !== 'all' ? doctorFilter : '') || account.doctorId, o.appointmentId)));
+    },
     billingOn, bills: scoped.bills, ledger: scoped.ledger, closings: scoped.closings,
     newBill: o => { setDetail(null); setBillDraft(o || {}); }, openBill: id => { setDetail(null); setOpenBillId(id); },
     setStatus, confirm: setConfirmBox,
@@ -205,18 +253,18 @@ export default function ClinicApp() {
   const pending = unresolvedVisits(scoped.appointments, now.date).length;
   const badge: Partial<Record<Page, number>> = { today: pending, messages: issues };
   const switchClinic = (id: string) => { setSelectedClinicId(id); try { localStorage.setItem('activeClinic', id); } catch { /* ignore */ } setDoctorFilter('all'); setScheduleDate(''); go('today'); };
-  const clinicPicker = account.role === 'admin' && db.clinics.length > 1
+  const clinicPicker = account.role === 'platform' && db.clinics.length > 1
     ? <Select label="Active clinic" className="clinic-select" value={clinic.id} onChange={switchClinic} options={db.clinics.map(c => ({ value: c.id, label: c.name }))} />
     : <strong className="clinic-name">{clinic.name}</strong>;
   const loading = <div className="page"><div className="skeleton h-title" /><div className="skeleton h-card" /></div>;
 
-  return <><Toaster position="bottom-center" richColors closeButton /><div className="app">
+  return <><Toaster position="bottom-center" richColors closeButton />{!demo && <IdleLock minutes={clinic.autoLockMinutes} email={account.user.email || ''} name={account.name} />}<div className="app">
     <aside className="side">
       <div className="side-top"><Logo /></div>
       <div className="side-clinic">{clinicPicker}<small>{clinic.address}</small></div>
       <nav className="side-nav" aria-label="Main">{navPages.map(p => <a key={p.id} href={'#' + p.id} className={page === p.id ? 'on' : ''} aria-current={page === p.id ? 'page' : undefined}>{p.icon}<span>{p.label}</span>{!!badge[p.id] && <em className="badge">{badge[p.id]}</em>}</a>)}</nav>
-      <div className="side-help"><p><Kbd>N</Kbd> appointment</p>{rxEnabled && <p><Kbd>R</Kbd> prescription</p>}{billingOn && <p><Kbd>B</Kbd> bill</p>}<p><Kbd>P</Kbd> patient</p><p><Kbd>/</Kbd> search</p></div>
-      <div className="side-user"><span className="avatar t1 avatar-sm">{initials(account.user.email || 'U')}</span><span className="side-email">{account.user.email}</span><button className="btn-icon" title="Sign out" aria-label="Sign out" onClick={() => demo ? location.assign(location.origin + location.pathname) : authService.signOut()}><LogOut size={16} /></button></div>
+      <div className="side-help"><p><Kbd>N</Kbd> appointment</p>{rxOn && can.writeRx && <p><Kbd>R</Kbd> prescription</p>}{billingOn && can.writeBilling && <p><Kbd>B</Kbd> bill</p>}<p><Kbd>P</Kbd> patient</p><p><Kbd>/</Kbd> search</p></div>
+      <div className="side-user"><span className="avatar t1 avatar-sm">{initials(account.name || 'U')}</span><span className="side-email" title={account.user.email || ''}>{account.name}<br /><small className="muted">{roleLabel(account.role)}</small></span><button className="btn-icon" title="Sign out" aria-label="Sign out" onClick={() => demo ? location.assign(location.origin + location.pathname) : authService.signOut()}><LogOut size={16} /></button></div>
     </aside>
 
     <div className="main">
@@ -225,7 +273,7 @@ export default function ClinicApp() {
         <button className="top-search" onClick={() => setPalette(true)}><Search size={16} /><span>Search patients, actions…</span><Kbd>Ctrl K</Kbd></button>
         <div className="top-right">
           <span className="top-clock" title={clinic.timezone}>{clockLabel(now.time)}</span>
-          {rxEnabled && <button className="btn btn-outline btn-top" onClick={() => w.writeRx()}><FileText size={16} /><span>Prescription</span></button>}
+          {rxOn && can.writeRx && <button className="btn btn-outline btn-top" onClick={() => w.writeRx()}><FileText size={16} /><span>Prescription</span></button>}
           <button className="btn btn-primary btn-top" onClick={() => w.book()}><CalendarPlus size={16} /><span>Appointment</span></button>
           <a className="btn-icon top-settings" href="#settings" aria-label="Settings"><Settings size={18} /></a>
         </div>
@@ -258,7 +306,7 @@ export default function ClinicApp() {
       {detail && <AppointmentDrawer w={w} appointment={detail} onClose={() => setDetail(null)} />}
     </Modal>
     <Modal open={clinicModal} onClose={() => setClinicModal(false)} title="Create clinic account" wide>
-      {clinicModal && <Suspense fallback={null}><AdminCreateClinic onCreated={() => setClinicModal(false)} /></Suspense>}
+      {clinicModal && <Suspense fallback={null}><AdminCreateClinic repo={repo} onCreated={() => setClinicModal(false)} /></Suspense>}
     </Modal>
     <Modal open={!!confirmBox} onClose={() => setConfirmBox(null)} title={confirmBox?.title}>
       {confirmBox && <div className="confirm"><p>{confirmBox.body}</p><div className="form-foot"><button className="btn btn-ghost" onClick={() => setConfirmBox(null)}>Keep as is</button><button data-autofocus className={'btn ' + (confirmBox.danger ? 'btn-danger' : 'btn-primary')} onClick={() => { confirmBox.action(); setConfirmBox(null); }}>{confirmBox.cta || 'Confirm'}</button></div></div>}

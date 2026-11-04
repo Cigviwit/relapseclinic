@@ -1,0 +1,90 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const { bookingError } = require('../booking-logic');
+const { dayTotals } = require('../closing-logic');
+const { auditEntry, changedFields, actorOf } = require('../audit-logic');
+const { changeError, cleanStaff } = require('../staff-logic');
+const { isFresh, PDF_LINK_DAYS } = require('../file-retention');
+
+const clinic = { id: 'c1', opens: '09:00', closes: '19:00', doctors: [{ id: 'd1' }, { id: 'd2' }] };
+const patient = { clinicId: 'c1' };
+const visit = (over = {}) => ({ id: 'a', clinicId: 'c1', patientId: 'p', doctorId: 'd1', date: '2026-11-10', time: '10:00', duration: 30, status: 'scheduled', ...over });
+
+test('booking refuses an overlap for the same doctor and allows the next free slot', () => {
+  const others = [visit({ id: 'b', time: '10:15' })];
+  assert.match(bookingError(clinic, patient, visit(), others), /already has an appointment/);
+  assert.equal(bookingError(clinic, patient, visit({ time: '10:45' }), others), null);
+  assert.equal(bookingError(clinic, patient, visit({ doctorId: 'd2' }), others), null);
+});
+
+test('a cancelled visit frees its slot and an appointment does not clash with itself', () => {
+  assert.equal(bookingError(clinic, patient, visit(), [visit({ id: 'b', status: 'cancelled' })]), null);
+  assert.equal(bookingError(clinic, patient, visit(), [visit()]), null);
+});
+
+test('booking refuses another clinic’s patient, an unknown doctor, and times outside hours', () => {
+  assert.match(bookingError(clinic, { clinicId: 'other' }, visit(), []), /from this clinic/);
+  assert.match(bookingError(clinic, undefined, visit(), []), /from this clinic/);
+  assert.match(bookingError(clinic, patient, visit({ doctorId: 'nope' }), []), /from this clinic/);
+  assert.match(bookingError(clinic, patient, visit({ time: '08:45' }), []), /clinic hours/);
+  assert.match(bookingError(clinic, patient, visit({ time: '18:45' }), []), /clinic hours/);
+  assert.match(bookingError(clinic, patient, visit({ duration: 3 }), []), /duration/);
+});
+
+test('day totals count payments, refunds and reversals on the day recorded', () => {
+  const entries = [
+    { date: 'D', kind: 'payment', method: 'cash', amount: 500 },
+    { date: 'D', kind: 'refund', method: 'cash', amount: 100 },
+    { date: 'D', kind: 'reversal', reversesKind: 'payment', method: 'upi', amount: 200 },
+    { date: 'D', kind: 'reversal', reversesKind: 'refund', method: 'card', amount: 50 },
+    { date: 'other', kind: 'payment', method: 'cash', amount: 999 },
+  ];
+  const bills = [{ date: 'D', total: 700, status: 'active' }, { date: 'earlier', total: 300, status: 'void', voidedOn: 'D' }, { date: 'D', total: 40, status: 'void', voidedOn: 'D' }];
+  assert.deepEqual(dayTotals('D', bills, entries), { collected: { cash: 400, upi: -200, card: 50, other: 0 }, billed: 400 });
+});
+
+test('the activity log records field names, never their values', () => {
+  const entry = auditEntry('patients', 'p1', { clinicId: 'c1', name: 'A', phone: '1' }, { clinicId: 'c1', name: 'B', phone: '1', updatedBy: 'u1' });
+  assert.deepEqual(entry, { clinicId: 'c1', collection: 'patients', docId: 'p1', action: 'update', fields: ['name'], patientId: 'p1', actorUid: 'u1' });
+  assert.ok(!JSON.stringify(entry).includes('"B"'));
+});
+
+test('system bookkeeping alone is not logged; creates and deletes are', () => {
+  assert.equal(auditEntry('bills', 'b1', { clinicId: 'c1' }, { clinicId: 'c1', number: '2026-27/00001' }), null);
+  assert.equal(auditEntry('prescriptions', 'r', { clinicId: 'c1' }, { clinicId: 'c1', sentAt: 'now' }), null);
+  assert.equal(auditEntry('bills', 'b1', undefined, { clinicId: 'c1', patientId: 'p', createdByUid: 'u' }).action, 'create');
+  assert.equal(auditEntry('users', 'u1', { clinicId: 'c1' }, undefined).action, 'delete');
+  assert.equal(auditEntry('clinics', 'c1', undefined, { name: 'x', updatedBy: 'admin' }).clinicId, 'c1');
+  assert.deepEqual(changedFields({ a: 1, b: [1] }, { a: 1, b: [2], c: 3 }), ['b', 'c']);
+});
+
+test('the actor of a void is whoever voided it, not whoever billed it', () => {
+  assert.equal(actorOf({ status: 'void', voidedByUid: 'v', createdByUid: 'c' }), 'v');
+  assert.equal(actorOf({ status: 'active', createdByUid: 'c' }), 'c');
+  assert.equal(actorOf({}), 'system');
+});
+
+test('a clinic always keeps an active owner, and nobody can deactivate themselves', () => {
+  const owner = { uid: 'o', role: 'owner' };
+  assert.match(changeError({ uid: 'x' }, owner, { role: 'doctor', active: true }, 1), /at least one active owner/);
+  assert.match(changeError({ uid: 'x' }, owner, { role: 'owner', active: false }, 1), /at least one active owner/);
+  assert.equal(changeError({ uid: 'x' }, owner, { role: 'doctor', active: true }, 2), null);
+  assert.match(changeError({ uid: 'o' }, owner, { role: 'owner', active: false }, 2), /your own login/);
+  assert.match(changeError({ uid: 'x' }, { uid: 'o' }, { role: 'doctor', active: true }, 1), /at least one active owner/, 'an account with no role counts as an owner');
+});
+
+test('a doctor login must name its doctor; other roles drop the link', () => {
+  const clinicD = { doctors: [{ id: 'd1' }] };
+  assert.throws(() => cleanStaff({ name: 'A', email: 'a@b.co', role: 'doctor' }, clinicD), /which doctor/);
+  assert.throws(() => cleanStaff({ name: 'A', email: 'a@b.co', role: 'doctor', doctorId: 'x' }, clinicD), /from this clinic/);
+  assert.throws(() => cleanStaff({ name: 'A', email: 'a@b.co', role: 'admin' }, clinicD), /Choose a role/);
+  assert.equal(cleanStaff({ name: ' A ', email: ' A@B.co ', role: 'frontdesk', doctorId: 'd1' }, clinicD).doctorId, '');
+  assert.deepEqual(cleanStaff({ name: ' A ', email: ' A@B.co ', role: 'doctor', doctorId: 'd1' }, clinicD), { name: 'A', email: 'a@b.co', role: 'doctor', doctorId: 'd1' });
+});
+
+test('a prescription PDF link stops working after the retention period', () => {
+  const now = Date.UTC(2026, 10, 5);
+  assert.equal(isFresh(now - (PDF_LINK_DAYS - 1) * 864e5, now), true);
+  assert.equal(isFresh(now - PDF_LINK_DAYS * 864e5, now), false);
+  assert.equal(isFresh(undefined, now), false);
+});

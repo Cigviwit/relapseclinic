@@ -1,7 +1,7 @@
 import type { Appointment, Clinic, Patient } from './clinic';
 
 /**
- * ClinicLoop records money; it never moves it. Patients pay the clinic directly
+ * RelapseClinic records money; it never moves it. Patients pay the clinic directly
  * (cash, card machine, the clinic's own UPI) and staff record what happened.
  *
  * All amounts are whole paise. Bills and ledger entries are never edited or deleted:

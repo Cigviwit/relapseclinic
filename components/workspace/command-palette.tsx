@@ -1,4 +1,3 @@
-"use client";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { CalendarPlus, FileText, IndianRupee, Search, UserPlus } from 'lucide-react';
 import { searchPatients } from '@/lib/patient-search';
@@ -20,18 +19,18 @@ export default function CommandPalette({ w, open, onClose, pages }: { w: Workspa
     const people = (term ? searchPatients(w.patients, q) : []).slice(0, 6).flatMap(p => [
       { id: 'p' + p.id, icon: <Avatar name={p.name} size="sm" />, label: p.name, hint: p.phone, run: done(() => w.go('patients', p.id)) },
     ]);
-    const rxEnabled = w.clinic.prescriptionsEnabled === true;
+    const rxEnabled = w.rxOn && w.can.writeRx;
     const actions: Item[] = [
       { id: 'book', icon: <CalendarPlus size={16} />, label: 'New appointment', hint: 'N', run: done(() => w.book()) },
       ...(rxEnabled ? [{ id: 'rx', icon: <FileText size={16} />, label: 'Write prescription', hint: 'R', run: done(() => w.writeRx()) }] : []),
-      ...(w.billingOn ? [{ id: 'bill', icon: <IndianRupee size={16} />, label: 'New bill', hint: 'B', run: done(() => w.newBill()) }] : []),
+      ...(w.billingOn && w.can.writeBilling ? [{ id: 'bill', icon: <IndianRupee size={16} />, label: 'New bill', hint: 'B', run: done(() => w.newBill()) }] : []),
       { id: 'patient', icon: <UserPlus size={16} />, label: 'Add patient', hint: 'P', run: done(() => w.editPatient()) },
       ...pages.map(pg => ({ id: 'go' + pg.id, icon: pg.icon, label: `Go to ${pg.label}`, run: done(() => w.go(pg.id)) })),
     ].filter(a => !term || a.label.toLowerCase().includes(term));
     const forPatient = people.length === 1 ? (() => { const p = w.patients.find(x => 'p' + x.id === people[0].id)!; return [
       { id: 'bk' + p.id, icon: <CalendarPlus size={16} />, label: `Book ${p.name}`, run: done(() => w.book({ patientId: p.id })) },
       ...(rxEnabled ? [{ id: 'rx' + p.id, icon: <FileText size={16} />, label: `Prescription for ${p.name}`, run: done(() => w.writeRx({ patientId: p.id })) }] : []),
-      ...(w.billingOn ? [{ id: 'bl' + p.id, icon: <IndianRupee size={16} />, label: `Bill for ${p.name}`, run: done(() => w.newBill({ patientId: p.id })) }] : []),
+      ...(w.billingOn && w.can.writeBilling ? [{ id: 'bl' + p.id, icon: <IndianRupee size={16} />, label: `Bill for ${p.name}`, run: done(() => w.newBill({ patientId: p.id })) }] : []),
     ]; })() : [];
     return [...people, ...forPatient, ...actions];
   }, [q, w, pages, onClose]);

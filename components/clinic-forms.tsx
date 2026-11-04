@@ -1,4 +1,3 @@
-"use client";
 import { useMemo, useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import { type Clinic, type Patient, type Appointment, type Database, addDays, clockLabel, normalizePhone, validateClinic, validateAppointment, zonedNow } from '@/lib/clinic';
@@ -23,11 +22,12 @@ export function PatientForm({ clinicId, patient, onSave }: { clinicId: string; p
   </form>;
 }
 
-const visitTypes = ['General consultation', 'Follow-up visit', 'New patient', 'Review with reports', 'Procedure'];
+const visitTypes = ['Check-up', 'Toothache', 'Scaling & polishing', 'Filling', 'Root canal', 'Extraction', 'Follow-up visit'];
 
-export function AppointmentForm({ db, clinic, date, appointment, patientId, doctorId, time, onSave, onCreatePatient }: { db: Database; clinic: Clinic; date: string; appointment?: Appointment; patientId?: string; doctorId?: string; time?: string; onSave: (a: Appointment) => void; onCreatePatient: (p: Patient) => void }) {
-  const [a, setA] = useState<Appointment>(appointment || { id: crypto.randomUUID(), clinicId: clinic.id, patientId: patientId || '', doctorId: doctorId || clinic.doctors[0]?.id || '', date, time: time || '', duration: 15, reason: 'General consultation', status: 'scheduled' });
+export function AppointmentForm({ db, clinic, date, appointment, patientId, doctorId, time, onSave, onCreatePatient }: { db: Database; clinic: Clinic; date: string; appointment?: Appointment; patientId?: string; doctorId?: string; time?: string; onSave: (a: Appointment) => Promise<void>; onCreatePatient: (p: Patient) => void }) {
+  const [a, setA] = useState<Appointment>(appointment || { id: crypto.randomUUID(), clinicId: clinic.id, patientId: patientId || '', doctorId: doctorId || clinic.doctors[0]?.id || '', date, time: time || '', duration: 15, reason: 'Check-up', status: 'scheduled' });
   const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
   const [manualTime, setManualTime] = useState(false);
   const change = (v: Partial<Appointment>) => { setA(x => ({ ...x, ...v })); setError(''); };
   const patients = useMemo(() => db.patients.filter(p => p.clinicId === clinic.id), [db.patients, clinic.id]);
@@ -35,7 +35,7 @@ export function AppointmentForm({ db, clinic, date, appointment, patientId, doct
   const today = zonedNow(clinic.timezone).date;
   const chosen = patients.find(p => p.id === a.patientId);
   const slotGroups = [['Morning', (t: string) => t < '12:00'], ['Afternoon', (t: string) => t >= '12:00' && t < '17:00'], ['Evening', (t: string) => t >= '17:00']] as const;
-  return <form className="form" onSubmit={e => { e.preventDefault(); try { if (!a.patientId) throw new Error('Choose or add the patient.'); if (!a.time) throw new Error('Pick a time slot.'); const now = zonedNow(clinic.timezone); if (`${a.date}T${a.time}` <= `${now.date}T${now.time}`) throw new Error('Choose a future appointment time.'); validateAppointment(db, a); onSave(a); } catch (err) { setError((err as Error).message); } }}>
+  return <form className="form" onSubmit={e => { e.preventDefault(); try { if (!a.patientId) throw new Error('Choose or add the patient.'); if (!a.time) throw new Error('Pick a time slot.'); const now = zonedNow(clinic.timezone); if (`${a.date}T${a.time}` <= `${now.date}T${now.time}`) throw new Error('Choose a future appointment time.'); validateAppointment(db, a); setSaving(true); onSave(a).catch(err => setError((err as Error).message)).finally(() => setSaving(false)); } catch (err) { setError((err as Error).message); } }}>
     <Field label="Patient"><PatientPicker patients={patients} value={a.patientId} onChange={patientId => change({ patientId })} onCreate={onCreatePatient} clinicId={clinic.id} autoFocus={!a.patientId} /></Field>
     {chosen && !chosen.consent && <p className="note note-warn">No WhatsApp consent — booking will be saved without reminders.</p>}
     {clinic.doctors.length > 1 && <Field label="Doctor">{clinic.doctors.length <= 4
@@ -56,12 +56,12 @@ export function AppointmentForm({ db, clinic, date, appointment, patientId, doct
     <Field label="Visit type"><div className="chips chips-sm">{visitTypes.map(v => <button type="button" key={v} className={'chip' + (a.reason === v ? ' on' : '')} onClick={() => change({ reason: v })}>{v}</button>)}</div>
       <input className="input" required value={a.reason} maxLength={100} onChange={e => change({ reason: e.target.value })} aria-label="Visit type" /></Field>
     <FormError error={error} />
-    <div className="form-foot"><span className="muted">Open {clockLabel(clinic.opens)} – {clockLabel(clinic.closes)}</span><button className="btn btn-primary" type="submit">{appointment ? 'Save appointment' : 'Book appointment'}{a.time ? ` · ${clockLabel(a.time)}` : ''}</button></div>
+    <div className="form-foot"><span className="muted">Open {clockLabel(clinic.opens)} – {clockLabel(clinic.closes)}</span><button className="btn btn-primary" type="submit" disabled={saving}>{saving ? 'Booking…' : <>{appointment ? 'Save appointment' : 'Book appointment'}{a.time ? ` · ${clockLabel(a.time)}` : ''}</>}</button></div>
   </form>;
 }
 
 export function ClinicForm({ clinic, onSave, busy }: { clinic?: Clinic; onSave: (c: Clinic) => void; busy?: boolean }) {
-  const [c, setC] = useState<Clinic>(clinic || { id: crypto.randomUUID(), name: '', address: '', phone: '+91 ', timezone: 'Asia/Kolkata', opens: '09:00', closes: '19:00', doctors: [{ id: crypto.randomUUID(), name: '', specialty: 'General Physician' }] });
+  const [c, setC] = useState<Clinic>(clinic || { id: crypto.randomUUID(), name: '', address: '', phone: '+91 ', timezone: 'Asia/Kolkata', opens: '09:00', closes: '19:00', doctors: [{ id: crypto.randomUUID(), name: '', specialty: 'Dentist' }], rxPad: { specialty: 'dental' } });
   const [error, setError] = useState('');
   const change = (v: Partial<Clinic>) => setC({ ...c, ...v });
   const zones = useMemo(() => Array.from(new Set(['Asia/Kolkata', c.timezone, ...Intl.supportedValuesOf('timeZone')])), [c.timezone]);
@@ -74,7 +74,7 @@ export function ClinicForm({ clinic, onSave, busy }: { clinic?: Clinic; onSave: 
     <fieldset className="fs"><legend>Doctors</legend>
       {c.doctors.map((d, i) => <div className="doctor-row" key={d.id}>
         <Field label={`Doctor ${i + 1}`}><input className="input" required value={d.name} placeholder="Dr. Priya Nair" onChange={e => change({ doctors: c.doctors.map(x => x.id === d.id ? { ...x, name: e.target.value } : x) })} /></Field>
-        <Field label="Specialty"><input className="input" value={d.specialty} placeholder="General Physician" onChange={e => change({ doctors: c.doctors.map(x => x.id === d.id ? { ...x, specialty: e.target.value } : x) })} /></Field>
+        <Field label="Specialty"><input className="input" value={d.specialty} placeholder="Dentist" onChange={e => change({ doctors: c.doctors.map(x => x.id === d.id ? { ...x, specialty: e.target.value } : x) })} /></Field>
         <Field label="Email"><input className="input" type="email" value={d.email || ''} placeholder="doctor@clinic.com" onChange={e => change({ doctors: c.doctors.map(x => x.id === d.id ? { ...x, email: e.target.value } : x) })} /></Field>
         {!clinic && c.doctors.length > 1 ? <button type="button" className="btn-icon" aria-label="Remove doctor" onClick={() => change({ doctors: c.doctors.filter(x => x.id !== d.id) })}><Trash2 size={16} /></button> : <span />}
       </div>)}

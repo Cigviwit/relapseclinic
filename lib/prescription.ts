@@ -12,6 +12,8 @@ export type Prescription = {
   procedures: string; plan: string;
   medicines: Medicine[]; advice: string; tests: string; followUp: string;
   createdAt: string; sentAt: string;
+  /** A draft may change. A final prescription never does: a mistake is fixed by a new one whose `amends` names it. */
+  status: 'draft' | 'final'; amends?: string; finalizedBy?: string; finalizedAt?: string;
 };
 
 export const frequencies = ['1-0-1', '1-0-0', '0-0-1', '1-1-1', '0-1-0', '1-1-1-1', 'SOS', 'Once a week'];
@@ -27,12 +29,12 @@ export const blankVitals = (): Vitals => ({ bp: '', pulse: '', temp: '', weight:
 export function blankPrescription(clinic: Clinic, date: string, patientId = '', doctorId = '', appointmentId = ''): Prescription {
   const doctor = clinic.doctors.find(d => d.id === doctorId) || clinic.doctors[0];
   const specialty = doctor?.padSpecialty || clinic.rxPad?.specialty || 'general';
-  return { id: crypto.randomUUID(), clinicId: clinic.id, patientId, doctorId: doctor?.id || '', appointmentId, date, age: '', sex: '', specialty, vitals: blankVitals(), history: '', complaints: '', teeth: [], findings: '', diagnosis: '', procedures: '', plan: '', medicines: [blankMedicine()], advice: '', tests: '', followUp: '', createdAt: '', sentAt: '' };
+  return { id: crypto.randomUUID(), clinicId: clinic.id, patientId, doctorId: doctor?.id || '', appointmentId, date, age: '', sex: '', specialty, vitals: blankVitals(), history: '', complaints: '', teeth: [], findings: '', diagnosis: '', procedures: '', plan: '', medicines: [blankMedicine()], advice: '', tests: '', followUp: '', createdAt: '', sentAt: '', status: 'draft' };
 }
 
-/** Prescriptions saved before specialty pads existed lack the newer fields. */
+/** Prescriptions saved before specialty pads and drafts existed lack the newer fields. Those older ones count as final. */
 export function withDefaults(rx: Partial<Prescription> & Pick<Prescription, 'id' | 'clinicId'>): Prescription {
-  return { patientId: '', doctorId: '', appointmentId: '', date: '', age: '', sex: '', specialty: 'general', history: '', complaints: '', teeth: [], findings: '', diagnosis: '', procedures: '', plan: '', medicines: [], advice: '', tests: '', followUp: '', createdAt: '', sentAt: '', ...rx, vitals: { ...blankVitals(), ...rx.vitals } };
+  return { patientId: '', doctorId: '', appointmentId: '', date: '', age: '', sex: '', specialty: 'general', history: '', complaints: '', teeth: [], findings: '', diagnosis: '', procedures: '', plan: '', medicines: [], advice: '', tests: '', followUp: '', createdAt: '', sentAt: '', status: 'final', ...rx, vitals: { ...blankVitals(), ...rx.vitals } };
 }
 
 /** "36, 37" with tooth names for the patient-facing message. */
@@ -40,7 +42,18 @@ export const teethText = (teeth: number[]) => [...teeth].sort((a, b) => a - b).j
 
 /** Copy a previous prescription into a new draft dated today (for "repeat last Rx"). */
 export function repeatPrescription(previous: Prescription, date: string, doctorId?: string, appointmentId = ''): Prescription {
-  return { ...previous, id: crypto.randomUUID(), date, doctorId: doctorId || previous.doctorId, appointmentId, vitals: blankVitals(), followUp: '', createdAt: '', sentAt: '', medicines: previous.medicines.map(m => ({ ...m, id: crypto.randomUUID() })) };
+  return { ...previous, id: crypto.randomUUID(), date, doctorId: doctorId || previous.doctorId, appointmentId, vitals: blankVitals(), followUp: '', createdAt: '', sentAt: '', status: 'draft', amends: undefined, finalizedBy: undefined, finalizedAt: undefined, medicines: previous.medicines.map(m => ({ ...m, id: crypto.randomUUID() })) };
+}
+
+/** A new draft to correct a final prescription, keeping everything it said. It replaces the old one once finalised. */
+export function amendPrescription(previous: Prescription, date: string): Prescription {
+  return { ...previous, id: crypto.randomUUID(), date, createdAt: '', sentAt: '', status: 'draft', amends: previous.id, finalizedBy: undefined, finalizedAt: undefined, medicines: previous.medicines.map(m => ({ ...m, id: crypto.randomUUID() })) };
+}
+
+/** The prescriptions still in force. One is replaced only once its amendment is final: an unfinished draft replaces nothing. */
+export function currentPrescriptions<T extends Pick<Prescription, 'id' | 'amends' | 'status'>>(all: T[]): T[] {
+  const replaced = new Set(all.flatMap(rx => rx.amends && rx.status === 'final' ? [rx.amends] : []));
+  return all.filter(rx => !replaced.has(rx.id));
 }
 
 export const followUpPresets = (date: string) => [{ label: '3 days', value: addDays(date, 3) }, { label: '1 week', value: addDays(date, 7) }, { label: '2 weeks', value: addDays(date, 14) }, { label: '1 month', value: addDays(date, 30) }];

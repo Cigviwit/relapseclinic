@@ -51,3 +51,7 @@ next-env.d.ts
 # Generated reports and TypeScript build state
 /brag-output*/
 *.tsbuildinfo
+
+# Emulator logs and local-only secrets
+*-debug.log
+functions/.secret.local

@@ -3,10 +3,18 @@ const { getFirestore, FieldValue } = require('firebase-admin/firestore');
 const { onDocumentCreated, onDocumentWritten } = require('firebase-functions/v2/firestore');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
 const { onCall, onRequest, HttpsError } = require('firebase-functions/v2/https');
+const { getAuth } = require('firebase-admin/auth');
+const { getStorage } = require('firebase-admin/storage');
 const { randomBytes, timingSafeEqual } = require('node:crypto');
 const { defineSecret } = require('firebase-functions/params');
 const { logger } = require('firebase-functions');
 const { financialYear, billNumber } = require('./bill-number');
+const { ServiceError, resolveActor } = require('./access');
+const { bookAppointment } = require('./booking-logic');
+const { closeDay } = require('./closing-logic');
+const { AUDITED, auditEntry } = require('./audit-logic');
+const { createStaff, updateStaff, staffSetupLink, createClinic } = require('./staff-logic');
+const { pdfPath, isFresh, purgeExpiredFiles } = require('./file-retention');
 const { recordChanges, addDays, localNow, slotFor, missedDueNow, deliveryId, appointmentMessage, msg91Payload, prescriptionValues, prescriptionFileName, prescriptionDeliveryId, hasReplacementAppointment, digestDue, doctorDigest, doctorDigestId, manualDoctorDigestId } = require('./reminder-logic');
 
 initializeApp();
@@ -14,20 +22,17 @@ const db = getFirestore();
 const msg91Config = defineSecret('MSG91_CONFIG');
 const doctorEmailConfig = defineSecret('DOCTOR_EMAIL_CONFIG');
 const region = 'asia-south1';
-const ADMIN_UID = 'zfXlb9MEMQSQDBNYOk5RJFDJcZo1';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-// Firestore documents are capped at 1 MiB; the PDF is stored as bytes in one document.
 const MAX_PDF_BYTES = 950 * 1024;
-const PDF_LINK_DAYS = 30;
 
-async function assertClinicAccess(uid, clinicId, action) {
-  if (!uid) throw new HttpsError('unauthenticated', `Sign in to ${action}.`);
-  if (uid === ADMIN_UID) return;
-  const profile = await db.doc(`users/${uid}`).get();
-  if (!profile.exists || profile.data().clinicId !== clinicId) {
-    throw new HttpsError('permission-denied', `You cannot ${action} for this clinic.`);
+/** Turns a refusal from the shared logic into the error the browser shows. */
+const callable = (handler) => async (request) => {
+  try { return await handler(request); }
+  catch (error) {
+    if (error instanceof ServiceError) throw new HttpsError(error.code, error.message);
+    throw error;
   }
-}
+};
 
 async function postToMsg91(settings, payload) {
   const response = await fetch('https://api.msg91.com/api/v5/whatsapp/whatsapp-outbound-message/bulk/', {
@@ -217,13 +222,12 @@ exports.sendDoctorDigestNow = onCall({
   region, secrets: [doctorEmailConfig], timeoutSeconds: 540, maxInstances: 2,
 }, async (request) => {
   const uid = request.auth?.uid;
-  if (!uid) throw new HttpsError('unauthenticated', 'Sign in to send doctor digests.');
   const { clinicId, requestId } = request.data || {};
   if (typeof clinicId !== 'string' || !/^[A-Za-z0-9_-]{1,100}$/.test(clinicId) ||
       typeof requestId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(requestId)) {
     throw new HttpsError('invalid-argument', 'A valid clinic and request ID are required.');
   }
-  await assertClinicAccess(uid, clinicId, 'send digests');
+  await callable(() => resolveActor(db, request.auth, clinicId, ['owner', 'doctor', 'frontdesk', 'platform'], 'send digests'))();
   const clinicSnap = await db.doc(`clinics/${clinicId}`).get();
   if (!clinicSnap.exists) throw new HttpsError('not-found', 'Clinic not found.');
   const doctors = clinicSnap.data().doctors;
@@ -339,7 +343,9 @@ exports.sendPrescription = onCall({
   const rxSnap = await db.doc(`prescriptions/${prescriptionId}`).get();
   if (!rxSnap.exists) throw new HttpsError('not-found', 'Save the prescription before sending it.');
   const rx = rxSnap.data();
-  await assertClinicAccess(request.auth?.uid, rx.clinicId, 'send prescriptions');
+  await callable(() => resolveActor(db, request.auth, rx.clinicId, ['owner', 'doctor', 'frontdesk'], 'send prescriptions'))();
+  // Prescriptions from before drafts existed have no status and count as final.
+  if ((rx.status || 'final') !== 'final') throw new HttpsError('failed-precondition', 'Finalise the prescription before sending it.');
   const [clinicSnap, patientSnap] = await Promise.all([db.doc(`clinics/${rx.clinicId}`).get(), db.doc(`patients/${rx.patientId}`).get()]);
   if (!clinicSnap.exists || !patientSnap.exists || patientSnap.data().clinicId !== rx.clinicId) {
     throw new HttpsError('failed-precondition', 'The patient or clinic for this prescription no longer exists.');
@@ -370,11 +376,18 @@ exports.sendPrescription = onCall({
       requestedBy: request.auth.uid, createdAt: FieldValue.serverTimestamp(),
     });
     tx.create(db.doc(`prescriptionFiles/${id}`), {
-      clinicId: rx.clinicId, prescriptionId, token, fileName: name, pdf: bytes, createdAt: FieldValue.serverTimestamp(),
+      clinicId: rx.clinicId, prescriptionId, token, fileName: name, path: pdfPath(id), createdAt: FieldValue.serverTimestamp(),
     });
     return true;
   });
   if (!claimed) return { status: (await ref.get()).data()?.status || 'unknown', error: 'This send was already requested.' };
+  try {
+    await getStorage().bucket().file(pdfPath(id)).save(bytes, { contentType: 'application/pdf', resumable: false });
+  } catch (error) {
+    await ref.update({ status: 'failed', error: 'The prescription PDF could not be stored.', updatedAt: FieldValue.serverTimestamp() });
+    logger.error('Prescription PDF upload failed', { deliveryId: id, error: String(error.message) });
+    return { status: 'failed', error: 'The prescription PDF could not be stored. Try again.' };
+  }
 
   const project = process.env.GCLOUD_PROJECT || JSON.parse(process.env.FIREBASE_CONFIG || '{}').projectId;
   const link = `https://${region}-${project}.cloudfunctions.net/prescriptionFile?id=${id}&t=${token}`;
@@ -417,18 +430,74 @@ exports.assignBillNumber = onDocumentCreated({ document: 'bills/{billId}', regio
 });
 
 // Serves a sent prescription PDF to MSG91/WhatsApp. The link carries a random token
-// and stops working after PDF_LINK_DAYS.
+// and stops working once the file's retention period ends.
 exports.prescriptionFile = onRequest({ region, maxInstances: 5, invoker: 'public' }, async (req, res) => {
   const id = String(req.query.id || ''), token = String(req.query.t || '');
   if (req.method !== 'GET' || !/^rx_[0-9a-f]{32}$/.test(id) || !/^[0-9a-f]{48}$/.test(token)) { res.status(404).send('Not found'); return; }
   const snap = await db.doc(`prescriptionFiles/${id}`).get();
   const file = snap.data();
   const expected = Buffer.from(file?.token || '', 'utf8'), given = Buffer.from(token, 'utf8');
-  const fresh = file?.createdAt && Date.now() - file.createdAt.toMillis() < PDF_LINK_DAYS * 24 * 60 * 60 * 1000;
+  const fresh = isFresh(file?.createdAt?.toMillis(), Date.now());
   if (!file || expected.length !== given.length || !timingSafeEqual(expected, given) || !fresh) { res.status(404).send('Not found'); return; }
+  // Files sent before the move to Cloud Storage keep their bytes in the document until they expire.
+  let pdf;
+  try { pdf = file.path ? (await getStorage().bucket().file(file.path).download())[0] : Buffer.from(file.pdf); }
+  catch (error) { logger.error('Prescription PDF could not be read', { id, error: String(error.message) }); res.status(404).send('Not found'); return; }
   res.set('Content-Type', 'application/pdf');
   res.set('Content-Disposition', `inline; filename="${file.fileName}"`);
   res.set('Cache-Control', 'private, max-age=3600');
   res.set('X-Robots-Tag', 'noindex');
-  res.send(Buffer.from(file.pdf));
+  res.send(pdf);
 });
+
+exports.purgePrescriptionFiles = onSchedule({ schedule: 'every day 02:30', timeZone: 'Asia/Kolkata', region, timeoutSeconds: 540, maxInstances: 1 }, async () => {
+  const removed = await purgeExpiredFiles(db, getStorage().bucket(), Date.now());
+  if (removed) logger.info('Removed expired prescription PDFs', { removed });
+});
+
+const callOptions = { region, maxInstances: 10 };
+exports.bookAppointment = onCall(callOptions, callable((request) => bookAppointment(db, request.auth, request.data?.appointment)));
+exports.closeDay = onCall(callOptions, callable((request) => closeDay(db, request.auth, request.data)));
+exports.createStaff = onCall(callOptions, callable((request) => createStaff(db, getAuth(), request.auth, request.data)));
+exports.updateStaff = onCall(callOptions, callable((request) => updateStaff(db, getAuth(), request.auth, request.data)));
+exports.staffSetupLink = onCall(callOptions, callable((request) => staffSetupLink(db, getAuth(), request.auth, request.data)));
+exports.createClinic = onCall(callOptions, callable((request) => createClinic(db, getAuth(), request.auth, request.data)));
+
+/** A download of the clinic's data is recorded before the browser builds the file. */
+exports.recordDataExport = onCall(callOptions, callable(async (request) => {
+  const clinicId = request.data?.clinicId;
+  if (typeof clinicId !== 'string' || !/^[A-Za-z0-9_-]{1,100}$/.test(clinicId)) throw new ServiceError('invalid-argument', 'A valid clinic is required.');
+  const actor = await resolveActor(db, request.auth, clinicId, ['owner'], 'export clinic data');
+  await db.collection('auditLog').add({ clinicId, collection: 'clinics', docId: clinicId, action: 'export', fields: [], actorUid: actor.uid, actorName: actor.name, at: FieldValue.serverTimestamp() });
+  return { ok: true };
+}));
+
+/**
+ * Browser errors, so a problem at a clinic is visible without anyone reporting it. Cloud Logging groups these
+ * in Error Reporting. The stack and message are all that is sent: no form values, patient ids or page contents.
+ */
+exports.reportClientError = onCall({ ...callOptions, maxInstances: 2 }, (request) => {
+  if (!request.auth?.uid) return { ok: false };
+  const text = (value, max) => (typeof value === 'string' ? value.slice(0, max) : '');
+  logger.error(text(request.data?.message, 300) || 'Browser error', { source: 'browser', uid: request.auth.uid, stack: text(request.data?.stack, 3000), page: text(request.data?.page, 40), release: text(request.data?.release, 40) });
+  return { ok: true };
+});
+
+// The activity log. Triggers can fire more than once, so the id comes from the event and a retry overwrites itself.
+const actorNames = new Map();
+async function actorName(uid) {
+  if (uid === 'system') return 'System';
+  if (!actorNames.has(uid)) {
+    const profile = (await db.doc(`users/${uid}`).get()).data();
+    if (actorNames.size > 500) actorNames.clear();
+    actorNames.set(uid, profile?.name || profile?.email || 'Platform administrator');
+  }
+  return actorNames.get(uid);
+}
+for (const name of AUDITED) {
+  exports[`audit_${name}`] = onDocumentWritten({ document: `${name}/{docId}`, region }, async (event) => {
+    const entry = auditEntry(name, event.params.docId, event.data?.before?.data(), event.data?.after?.data());
+    if (!entry) return;
+    await db.doc(`auditLog/${event.id}`).set({ ...entry, actorName: await actorName(entry.actorUid), at: event.time ? new Date(event.time) : FieldValue.serverTimestamp() });
+  });
+}

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { Repository } from '@/lib/firestore-repository';
+import type { PatientHistory, Repository } from '@/lib/firestore-repository';
 import type { PatientNote, PatientRecord, RecordAudit } from '@/lib/patient-record';
 
 type Subscribe<T> = (onUpdate: (value: T) => void, onError: (error: Error) => void) => () => void;
@@ -16,4 +16,5 @@ function useLive<T>(key: string, subscribe: Subscribe<T>): Live<T> {
 const keyOf = (clinicId: string, patientId: string) => patientId ? `${clinicId}/${patientId}` : '';
 export const usePatientRecord = (repo: Repository, clinicId: string, patientId: string) => useLive<PatientRecord | null>(keyOf(clinicId, patientId), (ok, fail) => repo.subscribePatientRecord(clinicId, patientId, ok, fail));
 export const usePatientNotes = (repo: Repository, clinicId: string, patientId: string) => useLive<PatientNote[]>(keyOf(clinicId, patientId), (ok, fail) => repo.subscribePatientNotes(clinicId, patientId, ok, fail));
+export const usePatientHistory = (repo: Repository, clinicId: string, patientId: string, includeRx: boolean) => useLive<PatientHistory>(patientId ? `${clinicId}/${patientId}/${includeRx}` : '', (ok, fail) => repo.subscribePatientHistory(clinicId, patientId, includeRx, ok, fail));
 export const useRecordAudit = (repo: Repository, clinicId: string, patientId: string) => useLive<RecordAudit[]>(keyOf(clinicId, patientId), (ok, fail) => repo.subscribeRecordAudit(clinicId, patientId, ok, fail));

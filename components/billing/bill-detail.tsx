@@ -1,4 +1,3 @@
-"use client";
 import { useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { Ban, CalendarClock, Download, MessageCircle, Printer, RotateCcw, UserRound } from 'lucide-react';
@@ -50,13 +49,13 @@ export default function BillDetail({ w, billId, onClose }: { w: Workspace; billI
   const closed = w.closings.some(c => c.id === closingId(w.clinic.id, w.now.date));
   const fileName = `Bill ${patient?.name || ''} ${bill.date}.pdf`.replace(/[^\w .-]+/g, '').replace(/\s+/g, '-');
 
-  function voidBill(reason: string, by: string) {
-    w.repo.voidBill(w.account, bill!.id, { voidReason: reason, voidedOn: w.now.date, voidedBy: by }).catch(e => toast.error(`The bill was not voided: ${e.message}`));
+  function voidBill(reason: string) {
+    w.repo.voidBill(w.account, bill!.id, { voidReason: reason, voidedOn: w.now.date }).catch(e => toast.error(`The bill was not voided: ${e.message}`));
     toast.success(balance.paid ? `Bill voided. ${formatMoney(balance.paid)} paid on it is now credit.` : 'Bill voided');
     setMode('idle');
   }
-  function reverse(entry: LedgerEntry, reason: string, by: string) {
-    w.repo.addLedgerEntry(w.account, reversalOf(entry, w.now.date, by, reason)).catch(e => toast.error(`The correction was not saved: ${e.message}`));
+  function reverse(entry: LedgerEntry, reason: string) {
+    w.repo.addLedgerEntry(w.account, reversalOf(entry, w.now.date, w.account.name, reason)).catch(e => toast.error(`The correction was not saved: ${e.message}`));
     toast.success('Correction recorded today');
     setReversing(null);
   }
@@ -95,19 +94,19 @@ export default function BillDetail({ w, billId, onClose }: { w: Workspace; billI
     </dl>
 
     {entries.length > 0 && <><h3 className="sec-title">Payments on this bill</h3>
-      <ul className="ledger-list">{entries.map(e => <LedgerRow key={e.id} entry={e} isReversed={reversed.has(e.id)} onReverse={!closed ? () => setReversing(e) : undefined} />)}</ul></>}
+      <ul className="ledger-list">{entries.map(e => <LedgerRow key={e.id} entry={e} isReversed={reversed.has(e.id)} onReverse={!closed && w.can.correctBilling ? () => setReversing(e) : undefined} />)}</ul></>}
     {balance.paid > receiptEntries.reduce((s, e) => s + e.amount, 0) && <p className="muted small">Includes the patient’s advance or credit.</p>}
-    {reversing && <ReasonForm w={w} title={`Correct ${formatMoney(reversing.amount)} ${methodLabel(reversing.method)}?`} cta="Record correction" onCancel={() => setReversing(null)} onSubmit={(reason, by) => reverse(reversing, reason, by)} />}
+    {reversing && <ReasonForm title={`Correct ${formatMoney(reversing.amount)} ${methodLabel(reversing.method)}?`} cta="Record correction" onCancel={() => setReversing(null)} onSubmit={reason => reverse(reversing, reason)} />}
 
     {mode === 'collect' && <MoneyForm w={w} patientId={bill.patientId} kind="payment" billId={bill.id} billNote={`Bill ${billLabel(bill)}`} account={account} suggested={balance.due} onDone={() => setMode('idle')} />}
-    {mode === 'void' && <ReasonForm w={w} title="Void this bill?" cta="Void bill" onCancel={() => setMode('idle')} onSubmit={voidBill} />}
+    {mode === 'void' && <ReasonForm title="Void this bill?" cta="Void bill" onCancel={() => setMode('idle')} onSubmit={voidBill} />}
 
     {mode === 'idle' && !reversing && <div className="drawer-actions">
-      {bill.status === 'active' && balance.due > 0 && <button className="btn btn-primary" onClick={() => setMode('collect')}><CalendarClock size={16} />Collect {formatMoney(balance.due)}</button>}
+      {w.can.writeBilling && bill.status === 'active' && balance.due > 0 && <button className="btn btn-primary" onClick={() => setMode('collect')}><CalendarClock size={16} />Collect {formatMoney(balance.due)}</button>}
       <button className="btn btn-outline" onClick={print}><Printer size={16} />Print</button>
       <button className="btn btn-outline" onClick={() => void download()}><Download size={16} />PDF</button>
       {patient && bill.status === 'active' && <a className="btn btn-outline" href={whatsappUrl(patient.phone, billMessage(bill, w.clinic, patient, balance))} target="_blank" rel="noreferrer"><MessageCircle size={16} />My WhatsApp</a>}
-      {bill.status === 'active' && !closed && <button className="btn btn-ghost text-danger" onClick={() => setMode('void')}><Ban size={16} />Void bill</button>}
+      {w.can.correctBilling && bill.status === 'active' && !closed && <button className="btn btn-ghost text-danger" onClick={() => setMode('void')}><Ban size={16} />Void bill</button>}
     </div>}
     <div className="pad-export" ref={exportRef} aria-hidden><Receipt w={w} bill={bill} balance={balance} entries={receiptEntries} /></div>
   </div>;

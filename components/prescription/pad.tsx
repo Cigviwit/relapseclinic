@@ -1,4 +1,3 @@
-"use client";
 import type { CSSProperties } from 'react';
 import { dateLabel, type Clinic, type Doctor, type Patient } from '@/lib/clinic';
 import { medicineInstruction, teethText, vitalsLine, type Prescription } from '@/lib/prescription';

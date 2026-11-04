@@ -1,4 +1,3 @@
-"use client";
 import { useState } from 'react';
 import { addDays } from '@/lib/clinic';
 import { computeImpact } from '@/lib/impact';
@@ -9,16 +8,16 @@ import type { Workspace } from './types';
 const slotName: Record<string, string> = { booked: 'Booking confirmations', two_days_before: '2-day reminders', appointment_day: 'Appointment-day reminders', missed_day_one: 'Missed-visit follow-ups', missed_day_seven: 'Seven-day follow-ups' };
 
 export default function ImpactView({ w }: { w: Workspace }) {
-  const [days, setDays] = useState<'30' | '90' | 'all'>('30');
+  const [days, setDays] = useState<'30' | '90' | '180'>('30');
   const [fee, setFee] = useState(() => { try { return localStorage.getItem('impactVisitFee') || ''; } catch { return ''; } });
-  const from = days === 'all' ? undefined : addDays(w.now.date, -Number(days));
-  const impact = computeImpact(w.appointments, w.deliveries, from ? { from, to: w.now.date } : undefined);
+  const from = addDays(w.now.date, -Number(days));
+  const impact = computeImpact(w.appointments, w.deliveries, { from, to: w.now.date });
   const max = Math.max(1, ...Object.values(impact.messagesBySlot));
   const feeNum = Number(fee) || 0;
   const recovered = w.billingOn ? recoveredRevenue(w.appointments, w.deliveries, w.bills, w.ledger, from, w.now.date) : null;
   return <div className="page">
     <header className="page-head"><div><p className="eyebrow">{w.clinic.name}</p><h1>Impact</h1></div>
-      <Chips label="Period" size="sm" value={days} onChange={setDays} options={[{ value: '30', label: '30 days' }, { value: '90', label: '90 days' }, { value: 'all', label: 'All time' }]} /></header>
+      <Chips label="Period" size="sm" value={days} onChange={setDays} options={[{ value: '30', label: '30 days' }, { value: '90', label: '90 days' }, { value: '180', label: '6 months' }]} /></header>
     <p className="lede">A missed visit counts as recovered when the patient got a follow-up and has a later booked or completed visit.</p>
     <div className="stats stats-4">
       <div className="stat"><span>Messages sent</span><strong>{impact.messagesSent}</strong><small>accepted by WhatsApp provider</small></div>

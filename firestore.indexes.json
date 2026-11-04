@@ -7,6 +7,47 @@
         { "fieldPath": "clinicId", "order": "ASCENDING" },
         { "fieldPath": "date", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "appointments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "clinicId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "prescriptions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "clinicId", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "messageDeliveries",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "clinicId", "order": "ASCENDING" },
+        { "fieldPath": "appointmentDate", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "doctorDigestDeliveries",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "clinicId", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "auditLog",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "clinicId", "order": "ASCENDING" },
+        { "fieldPath": "at", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

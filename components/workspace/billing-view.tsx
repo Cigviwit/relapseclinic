@@ -1,12 +1,10 @@
-"use client";
 import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { IndianRupee, Lock, Plus, Search, Wallet } from 'lucide-react';
 import { addDays, dateLabel } from '@/lib/clinic';
-import { billLabel, closingId, daySummary, duesList, formatMoney, makeClosing, parseRupees, patientAccount, paymentMethods, reversedIds } from '@/lib/billing';
+import { billLabel, closingId, daySummary, duesList, formatMoney, parseRupees, patientAccount, paymentMethods, reversedIds } from '@/lib/billing';
 import { Avatar, Chips, Empty, Field, FormError, Status } from '../kit';
 import { LedgerRow } from '../billing/bill-detail';
-import { StaffField, useStaffName } from '../billing/money-form';
 import type { Workspace } from './types';
 
 export default function BillingView({ w }: { w: Workspace }) {
@@ -17,7 +15,7 @@ export default function BillingView({ w }: { w: Workspace }) {
   return <div className="page">
     <header className="page-head">
       <div><p className="eyebrow">{dateLabel(w.now.date, { weekday: 'long', day: 'numeric', month: 'long' })}</p><h1>Billing</h1></div>
-      <button className="btn btn-primary" onClick={() => w.newBill()}><Plus size={16} />New bill</button>
+      {w.can.writeBilling && <button className="btn btn-primary" onClick={() => w.newBill()}><Plus size={16} />New bill</button>}
     </header>
     <div className="stats stats-4">
       <div className="stat stat-accent"><span>Collected today</span><strong>{formatMoney(today.total)}</strong><small>{today.entries.length} entr{today.entries.length === 1 ? 'y' : 'ies'}</small></div>
@@ -47,8 +45,8 @@ function DayTab({ w }: { w: Workspace }) {
   const [date, setDate] = useState(w.now.date);
   const [countedText, setCountedText] = useState('');
   const [note, setNote] = useState('');
-  const [by, setBy] = useStaffName();
   const [error, setError] = useState('');
+  const [closing_, setClosing] = useState(false);
   const summary = daySummary(date, w.bills, w.ledger);
   const closing = w.closings.find(c => c.id === closingId(w.clinic.id, date));
   const reversed = reversedIds(w.ledger);
@@ -61,11 +59,11 @@ function DayTab({ w }: { w: Workspace }) {
 
   function close() {
     try {
-      if (!by.trim()) throw new Error('Enter your name.');
       if (counted === null) throw new Error('Count the cash in the drawer and enter the amount.');
       // Entries still waiting to sync from another device would be refused after closing, so closing needs a live connection.
       if (!navigator.onLine) throw new Error('Connect to the internet before closing the day, so entries from other computers are included.');
-      w.repo.closeDay(w.account, makeClosing(w.clinic.id, date, summary, counted, by.trim(), note.trim())).then(() => { toast.success(`${dateLabel(date, { day: 'numeric', month: 'short' })} closed`); setCountedText(''); setNote(''); }).catch(e => toast.error(`The day was not closed: ${e.message}`));
+      setClosing(true);
+      w.repo.closeDay({ clinicId: w.clinic.id, date, countedCash: counted, ...(note.trim() ? { note: note.trim() } : {}) }).then(() => { toast.success(`${dateLabel(date, { day: 'numeric', month: 'short' })} closed`); setCountedText(''); setNote(''); }).catch(e => toast.error(`The day was not closed: ${e.message}`)).finally(() => setClosing(false));
       setError('');
     } catch (e) { setError((e as Error).message); }
   }
@@ -91,15 +89,12 @@ function DayTab({ w }: { w: Workspace }) {
             <div className={closing.difference ? 'bill-due' : ''}><dt>Difference</dt><dd>{formatMoney(closing.difference)}</dd></div>
           </dl>
           <p className="muted small">Closed by {closing.closedBy}.{closing.note ? ` ${closing.note}` : ''} Later corrections appear on the day they are made.</p>
-        </> : <div className="form">
-          <div className="grid-2">
-            <Field label="Cash counted (₹)"><input className="input" inputMode="decimal" value={countedText} onChange={e => setCountedText(e.target.value)} /></Field>
-            <StaffField w={w} value={by} onChange={setBy} label="Closed by" />
-          </div>
+        </> : !w.can.closeDay ? <p className="muted small">Your role cannot close the day.</p> : <div className="form">
+          <Field label="Cash counted (₹)"><input className="input" inputMode="decimal" value={countedText} onChange={e => setCountedText(e.target.value)} /></Field>
           {counted !== null && counted !== summary.collected.cash && <p className="note note-warn">{formatMoney(Math.abs(counted - summary.collected.cash))} {counted > summary.collected.cash ? 'more' : 'less'} than recorded. Closing keeps this difference on record.</p>}
           <Field label="Note (optional)"><input className="input" value={note} maxLength={300} onChange={e => setNote(e.target.value)} /></Field>
           <FormError error={error} />
-          <button className="btn btn-primary btn-block" onClick={close}>Close the day</button>
+          <button className="btn btn-primary btn-block" onClick={close} disabled={closing_}>{closing_ ? 'Closing…' : 'Close the day'}</button>
           <p className="muted small">Once closed, no new entries can be added to this day and its totals stay fixed.</p>
         </div>}
       </section>

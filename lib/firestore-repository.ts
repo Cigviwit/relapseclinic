@@ -1,67 +1,130 @@
-import { collection, doc, onSnapshot, query, serverTimestamp, setDoc, updateDoc, where, type DocumentData, type QuerySnapshot } from "firebase/firestore";
-import { firestore } from "./firebase";
+import { collection, doc, documentId, getDoc, getDocs, limit, onSnapshot, orderBy, query, serverTimestamp, setDoc, startAfter, updateDoc, where, type DocumentData, type QueryDocumentSnapshot, type QuerySnapshot } from "firebase/firestore";
+import { auth, callFunction, firestore, ServerUnreachable } from "./firebase";
 import { type Account } from "./auth-service";
-import { type Database, type Clinic, type Patient, type Appointment, type Reminder } from "./clinic";
-import { type Prescription } from "./prescription";
+import { type Clinic, type Patient, type Appointment, type Reminder } from "./clinic";
+import { withDefaults, type Prescription } from "./prescription";
 import { type Bill, type DayClosing, type LedgerEntry } from "./billing";
 import { blankPatientRecord, type PatientNote, type PatientRecord, type RecordAudit } from "./patient-record";
+import { mergeById } from "./data-window";
+import { plainValue } from "./csv";
+import type { StaffRole } from "./permissions";
 
 type Unsubscribe = () => void;
+type OnError = (error: Error) => void;
+export type ClinicData = { patients: Patient[]; appointments: Appointment[]; reminders: Reminder[] };
+export type PatientHistory = { appointments: Appointment[]; prescriptions: Prescription[] };
+export type StaffMember = { uid: string; clinicId: string; name: string; email: string; role: StaffRole; doctorId: string; active: boolean };
+export type NewStaff = { clinicId: string; name: string; email: string; role: StaffRole; doctorId: string };
+export type AuditEntry = { id: string; clinicId: string; collection: string; docId: string; action: 'create' | 'update' | 'delete' | 'export'; fields: string[]; patientId?: string; actorUid: string; actorName: string; at: string };
+
 export type Repository = {
-  subscribeDatabase(account: Account, onUpdate: (db: Database) => void, onError: (error: Error) => void): Unsubscribe;
-  subscribeDeliveries(account: Account, onUpdate: (records: MessageDelivery[]) => void, onError: (error: Error) => void): Unsubscribe;
-  subscribeDoctorDigests(account: Account, onUpdate: (records: DoctorDigestDelivery[]) => void, onError: (error: Error) => void): Unsubscribe;
-  subscribePrescriptions(account: Account, onUpdate: (records: Prescription[]) => void, onError: (error: Error) => void): Unsubscribe;
+  subscribeClinics(account: Account, onUpdate: (clinics: Clinic[]) => void, onError: OnError): Unsubscribe;
+  /** One clinic's patients, its appointments since `from` and any older visit still needing an outcome. */
+  subscribeClinicData(clinicId: string, from: string, onUpdate: (data: ClinicData) => void, onError: OnError): Unsubscribe;
+  subscribeDeliveries(clinicId: string, from: string, onUpdate: (records: MessageDelivery[]) => void, onError: OnError): Unsubscribe;
+  subscribeDoctorDigests(clinicId: string, from: string, onUpdate: (records: DoctorDigestDelivery[]) => void, onError: OnError): Unsubscribe;
+  subscribePrescriptions(clinicId: string, from: string, onUpdate: (records: Prescription[]) => void, onError: OnError): Unsubscribe;
+  /** Every visit and prescription for one patient, while that patient is open. */
+  subscribePatientHistory(clinicId: string, patientId: string, includeRx: boolean, onUpdate: (history: PatientHistory) => void, onError: OnError): Unsubscribe;
+  /** Visits outside the live window, for looking back through the schedule. */
+  loadAppointments(clinicId: string, from: string, to: string): Promise<Appointment[]>;
+  getPrescription(id: string): Promise<Prescription | null>;
   saveClinic(clinic: Clinic): Promise<void>;
   /** Administrator only; firestore.rules rejects it from clinic accounts. */
   setPrescriptionsEnabled(clinicId: string, enabled: boolean): Promise<void>;
   savePatient(patient: Patient): Promise<void>;
-  saveAppointment(appointment: Appointment): Promise<void>;
-  savePrescription(prescription: Prescription): Promise<void>;
+  /** Books or reschedules on the server, which refuses a clash. Fails when offline. */
+  bookAppointment(appointment: Appointment): Promise<void>;
+  /** Records what happened to a booked visit. */
+  setAppointmentStatus(appointmentId: string, status: Appointment['status']): Promise<void>;
+  /** `status: 'final'` locks the prescription for good, under the signed-in person's name. */
+  savePrescription(account: Account, prescription: Prescription): Promise<void>;
   /** Sends the PDF through the clinic's MSG91 WhatsApp number. */
   sendPrescription(prescriptionId: string, pdfBase64: string, fileName: string): Promise<SendResult>;
   /** The patient-record calls below listen to one patient at a time, while that patient is open. */
-  subscribePatientRecord(clinicId: string, patientId: string, onUpdate: (record: PatientRecord | null) => void, onError: (error: Error) => void): Unsubscribe;
-  subscribePatientNotes(clinicId: string, patientId: string, onUpdate: (notes: PatientNote[]) => void, onError: (error: Error) => void): Unsubscribe;
-  subscribeRecordAudit(clinicId: string, patientId: string, onUpdate: (entries: RecordAudit[]) => void, onError: (error: Error) => void): Unsubscribe;
+  subscribePatientRecord(clinicId: string, patientId: string, onUpdate: (record: PatientRecord | null) => void, onError: OnError): Unsubscribe;
+  subscribePatientNotes(clinicId: string, patientId: string, onUpdate: (notes: PatientNote[]) => void, onError: OnError): Unsubscribe;
+  subscribeRecordAudit(clinicId: string, patientId: string, onUpdate: (entries: RecordAudit[]) => void, onError: OnError): Unsubscribe;
   /** `record.version` is the version the edit started from. Refused if someone has saved since. */
   savePatientRecord(account: Account, record: PatientRecord): Promise<void>;
   addPatientNote(account: Account, note: PatientNote): Promise<void>;
-  subscribeBills(account: Account, onUpdate: (records: Bill[]) => void, onError: (error: Error) => void): Unsubscribe;
-  subscribeLedger(account: Account, onUpdate: (records: LedgerEntry[]) => void, onError: (error: Error) => void): Unsubscribe;
-  subscribeDayClosings(account: Account, onUpdate: (records: DayClosing[]) => void, onError: (error: Error) => void): Unsubscribe;
+  subscribeBills(clinicId: string, onUpdate: (records: Bill[]) => void, onError: OnError): Unsubscribe;
+  subscribeLedger(clinicId: string, onUpdate: (records: LedgerEntry[]) => void, onError: OnError): Unsubscribe;
+  subscribeDayClosings(clinicId: string, onUpdate: (records: DayClosing[]) => void, onError: OnError): Unsubscribe;
   /** Administrator only; firestore.rules rejects it from clinic accounts. */
   setBillingEnabled(clinicId: string, enabled: boolean): Promise<void>;
   saveBill(account: Account, bill: Bill): Promise<void>;
-  voidBill(account: Account, billId: string, change: { voidReason: string; voidedOn: string; voidedBy: string }): Promise<void>;
+  voidBill(account: Account, billId: string, change: { voidReason: string; voidedOn: string }): Promise<void>;
   addLedgerEntry(account: Account, entry: LedgerEntry): Promise<void>;
-  closeDay(account: Account, closing: DayClosing): Promise<void>;
+  /** The server works out the totals from the stored entries. */
+  closeDay(input: { clinicId: string; date: string; countedCash: number; note?: string }): Promise<void>;
+  subscribeStaff(clinicId: string, onUpdate: (staff: StaffMember[]) => void, onError: OnError): Unsubscribe;
+  createStaff(input: NewStaff): Promise<{ uid: string; setupLink: string }>;
+  updateStaff(input: { uid: string; name?: string; role?: StaffRole; doctorId?: string; active?: boolean }): Promise<void>;
+  staffSetupLink(uid: string): Promise<string>;
+  createClinic(clinic: Clinic, ownerName: string, ownerEmail: string): Promise<{ setupLink: string }>;
+  subscribeAuditLog(clinicId: string, onUpdate: (entries: AuditEntry[]) => void, onError: OnError): Unsubscribe;
+  /** Everything this person may read for the clinic, as plain data. The download is recorded in the activity log first. */
+  exportClinicData(clinicId: string, onProgress?: (name: string) => void): Promise<Record<string, unknown[]>>;
 };
 export type SendResult = { status: 'accepted' | 'failed' | 'unknown'; error?: string };
 export const staleRecordMessage = "This record could not be saved because it changed on another screen. Reopen it and try again.";
 
 /** Server timestamps become ISO strings here so the rest of the app only sees strings. */
 const iso = (value: unknown) => (value as { toDate?: () => Date } | null)?.toDate?.().toISOString() ?? "";
+const inClinic = (name: string, clinicId: string) => query(collection(firestore, name), where("clinicId", "==", clinicId));
 const forPatient = (name: string, clinicId: string, patientId: string) => query(collection(firestore, name), where("clinicId", "==", clinicId), where("patientId", "==", patientId));
+const since = (name: string, field: string, clinicId: string, from: string) => query(collection(firestore, name), where("clinicId", "==", clinicId), where(field, ">=", from));
 const rows = (snap: QuerySnapshot<DocumentData>) => snap.docs.map(d => d.data({ serverTimestamps: "estimate" }));
 /** Offline with nothing cached, Firestore reports an empty result. That means "unknown", not "no allergies recorded". */
 const unconfirmed = (snap: QuerySnapshot<DocumentData>) => snap.empty && snap.metadata.fromCache;
-/** Firestore refuses undefined fields; optional billing fields are simply left out. */
+/** Firestore refuses undefined fields; optional fields are simply left out. */
 const defined = <T extends object>(value: T) => Object.fromEntries(Object.entries(value).filter(([, v]) => v !== undefined));
+const uid = () => auth.currentUser?.uid ?? "";
+const toPrescription = (row: DocumentData) => withDefaults({ ...row, finalizedAt: iso(row.finalizedAt) } as unknown as Prescription);
 
-/** Admin sees every clinic's records; a clinic account only its own. */
-const scoped = (account: Account, name: string) => account.role === "admin"
-  ? collection(firestore, name)
-  : query(collection(firestore, name), where("clinicId", "==", account.clinicId));
-
-function subscribeCollection<T>(account: Account, name: string, onUpdate: (records: T[]) => void, onError: (error: Error) => void) {
-  return onSnapshot(scoped(account, name), snapshot => onUpdate(snapshot.docs.map(item => ({ id: item.id, ...item.data() } as T))), onError);
-}
+const EXPORTED = ["patients", "appointments", "patientRecords", "patientNotes", "prescriptions", "bills", "ledgerEntries", "dayClosings", "messageDeliveries"];
+const EXPORT_PAGE = 500;
 
 export const firestoreRepository: Repository = {
-  subscribeDoctorDigests: (account, onUpdate, onError) => subscribeCollection(account, "doctorDigestDeliveries", onUpdate, onError),
-  subscribeDeliveries: (account, onUpdate, onError) => subscribeCollection(account, "messageDeliveries", onUpdate, onError),
-  subscribePrescriptions: (account, onUpdate, onError) => subscribeCollection(account, "prescriptions", onUpdate, onError),
+  subscribeClinics(account, onUpdate, onError) {
+    if (account.role === "platform") return onSnapshot(collection(firestore, "clinics"), snap => onUpdate(snap.docs.map(d => d.data() as Clinic)), onError);
+    return onSnapshot(doc(firestore, "clinics", account.clinicId!), snap => onUpdate(snap.exists() ? [snap.data() as Clinic] : []), onError);
+  },
+  subscribeClinicData(clinicId, from, onUpdate, onError) {
+    const parts: { patients?: Patient[]; recent?: Appointment[]; unresolved?: Appointment[]; reminders?: Reminder[] } = {};
+    const notify = () => {
+      const { patients, recent, unresolved, reminders } = parts;
+      if (patients && recent && unresolved && reminders) onUpdate({ patients, reminders, appointments: mergeById(unresolved, recent) });
+    };
+    const listen = <K extends keyof typeof parts>(key: K, source: Parameters<typeof onSnapshot>[0]) => onSnapshot(source as ReturnType<typeof inClinic>, snap => { parts[key] = snap.docs.map(d => d.data()) as (typeof parts)[K]; notify(); }, onError);
+    const unsubs = [
+      listen("patients", inClinic("patients", clinicId)),
+      listen("recent", since("appointments", "date", clinicId, from)),
+      // A visit nobody resolved stays on the front desk's list, however old it is.
+      listen("unresolved", query(collection(firestore, "appointments"), where("clinicId", "==", clinicId), where("status", "==", "scheduled"), where("date", "<", from))),
+      listen("reminders", inClinic("reminders", clinicId)),
+    ];
+    return () => unsubs.forEach(u => u());
+  },
+  subscribeDeliveries: (clinicId, from, onUpdate, onError) => onSnapshot(since("messageDeliveries", "appointmentDate", clinicId, from), snap => onUpdate(snap.docs.map(d => ({ id: d.id, ...d.data() }) as MessageDelivery)), onError),
+  subscribeDoctorDigests: (clinicId, from, onUpdate, onError) => onSnapshot(since("doctorDigestDeliveries", "date", clinicId, from), snap => onUpdate(snap.docs.map(d => ({ id: d.id, ...d.data() }) as DoctorDigestDelivery)), onError),
+  subscribePrescriptions: (clinicId, from, onUpdate, onError) => onSnapshot(since("prescriptions", "date", clinicId, from), snap => onUpdate(rows(snap).map(toPrescription)), onError),
+  subscribePatientHistory(clinicId, patientId, includeRx, onUpdate, onError) {
+    let appointments: Appointment[] | null = null, prescriptions: Prescription[] | null = includeRx ? null : [];
+    const notify = () => { if (appointments && prescriptions) onUpdate({ appointments, prescriptions }); };
+    const unsubs = [onSnapshot(forPatient("appointments", clinicId, patientId), snap => { appointments = snap.docs.map(d => d.data() as Appointment); notify(); }, onError)];
+    if (includeRx) unsubs.push(onSnapshot(forPatient("prescriptions", clinicId, patientId), snap => { prescriptions = rows(snap).map(toPrescription); notify(); }, onError));
+    return () => unsubs.forEach(u => u());
+  },
+  async loadAppointments(clinicId, from, to) {
+    const snap = await getDocs(query(collection(firestore, "appointments"), where("clinicId", "==", clinicId), where("date", ">=", from), where("date", "<=", to)));
+    return snap.docs.map(d => d.data() as Appointment);
+  },
+  async getPrescription(id) {
+    const snap = await getDoc(doc(firestore, "prescriptions", id));
+    return snap.exists() ? toPrescription(snap.data()) : null;
+  },
   subscribePatientRecord: (clinicId, patientId, onUpdate, onError) => onSnapshot(forPatient("patientRecords", clinicId, patientId), { includeMetadataChanges: true }, snap => {
     if (unconfirmed(snap)) return;
     const [row] = rows(snap);
@@ -75,54 +138,56 @@ export const firestoreRepository: Repository = {
     try { await setDoc(doc(firestore, "patientRecords", record.id), { ...record, version: record.version + 1, updatedAt: serverTimestamp(), updatedBy: account.user.uid }); }
     catch (e) { throw (e as { code?: string }).code === "permission-denied" && record.version > 0 ? new Error(staleRecordMessage) : e; }
   },
-  addPatientNote: (account, note) => setDoc(doc(firestore, "patientNotes", note.id), { ...note, createdAt: serverTimestamp(), createdBy: account.user.uid }),
-  subscribeBills: (account, onUpdate, onError) => onSnapshot(scoped(account, "bills"), snap => onUpdate(rows(snap).map(row => ({ ...row, createdAt: iso(row.createdAt) }) as Bill)), onError),
-  subscribeLedger: (account, onUpdate, onError) => onSnapshot(scoped(account, "ledgerEntries"), snap => onUpdate(rows(snap).map(row => ({ ...row, createdAt: iso(row.createdAt) }) as LedgerEntry)), onError),
-  subscribeDayClosings: (account, onUpdate, onError) => onSnapshot(scoped(account, "dayClosings"), snap => onUpdate(rows(snap).map(row => ({ ...row, closedAt: iso(row.closedAt) }) as DayClosing)), onError),
-  setBillingEnabled: (clinicId, enabled) => updateDoc(doc(firestore, "clinics", clinicId), { billingEnabled: enabled }),
-  saveBill: (account, bill) => setDoc(doc(firestore, "bills", bill.id), { ...defined(bill), createdAt: serverTimestamp(), createdByUid: account.user.uid }),
-  voidBill: (account, billId, change) => updateDoc(doc(firestore, "bills", billId), { ...change, status: "void", voidedAt: serverTimestamp(), voidedByUid: account.user.uid }),
-  addLedgerEntry: (account, entry) => setDoc(doc(firestore, "ledgerEntries", entry.id), { ...defined(entry), createdAt: serverTimestamp(), createdByUid: account.user.uid }),
-  closeDay: (account, closing) => setDoc(doc(firestore, "dayClosings", closing.id), { ...defined(closing), closedAt: serverTimestamp(), closedByUid: account.user.uid }),
-  saveClinic: (clinic: Clinic) => setDoc(doc(firestore, "clinics", clinic.id), clinic),
-  setPrescriptionsEnabled: (clinicId, enabled) => updateDoc(doc(firestore, "clinics", clinicId), { prescriptionsEnabled: enabled }),
-  savePatient: (patient: Patient) => setDoc(doc(firestore, "patients", patient.id), patient),
-  saveAppointment: (appointment: Appointment) => setDoc(doc(firestore, "appointments", appointment.id), appointment),
-  savePrescription: (prescription: Prescription) => setDoc(doc(firestore, "prescriptions", prescription.id), prescription),
-  async sendPrescription(prescriptionId, pdf, fileName) {
-    const [{ getFunctions, httpsCallable }, { app }] = await Promise.all([import("firebase/functions"), import("./firebase")]);
-    const send = httpsCallable<{ prescriptionId: string; pdf: string; fileName: string; requestId: string }, SendResult>(getFunctions(app, "asia-south1"), "sendPrescription", { timeout: 70000 });
-    return (await send({ prescriptionId, pdf, fileName, requestId: crypto.randomUUID() })).data;
+  addPatientNote: (account, note) => setDoc(doc(firestore, "patientNotes", note.id), { ...note, createdAt: serverTimestamp(), createdBy: account.user.uid, createdByName: account.name }),
+  subscribeBills: (clinicId, onUpdate, onError) => onSnapshot(inClinic("bills", clinicId), snap => onUpdate(rows(snap).map(row => ({ ...row, createdAt: iso(row.createdAt) }) as Bill)), onError),
+  subscribeLedger: (clinicId, onUpdate, onError) => onSnapshot(inClinic("ledgerEntries", clinicId), snap => onUpdate(rows(snap).map(row => ({ ...row, createdAt: iso(row.createdAt) }) as LedgerEntry)), onError),
+  subscribeDayClosings: (clinicId, onUpdate, onError) => onSnapshot(inClinic("dayClosings", clinicId), snap => onUpdate(rows(snap).map(row => ({ ...row, closedAt: iso(row.closedAt) }) as DayClosing)), onError),
+  setBillingEnabled: (clinicId, enabled) => updateDoc(doc(firestore, "clinics", clinicId), { billingEnabled: enabled, updatedBy: uid() }),
+  saveBill: (account, bill) => setDoc(doc(firestore, "bills", bill.id), { ...defined(bill), createdBy: account.name, createdAt: serverTimestamp(), createdByUid: account.user.uid }),
+  voidBill: (account, billId, change) => updateDoc(doc(firestore, "bills", billId), { ...change, voidedBy: account.name, status: "void", voidedAt: serverTimestamp(), voidedByUid: account.user.uid }),
+  addLedgerEntry: (account, entry) => setDoc(doc(firestore, "ledgerEntries", entry.id), { ...defined(entry), collectedBy: account.name, createdAt: serverTimestamp(), createdByUid: account.user.uid }),
+  closeDay: input => callFunction("closeDay", input),
+  saveClinic: (clinic: Clinic) => setDoc(doc(firestore, "clinics", clinic.id), { ...defined(clinic), updatedBy: uid() }),
+  setPrescriptionsEnabled: (clinicId, enabled) => updateDoc(doc(firestore, "clinics", clinicId), { prescriptionsEnabled: enabled, updatedBy: uid() }),
+  savePatient: (patient: Patient) => setDoc(doc(firestore, "patients", patient.id), { ...defined(patient), updatedBy: uid(), updatedAt: serverTimestamp() }),
+  bookAppointment: appointment => callFunction("bookAppointment", { appointment }),
+  setAppointmentStatus: (appointmentId, status) => updateDoc(doc(firestore, "appointments", appointmentId), { status, updatedBy: uid(), updatedAt: serverTimestamp() }),
+  savePrescription(account, prescription) {
+    // The send time, finalising details and stamps are set here or on the server, never carried over from the form.
+    const { sentAt: _sentAt, finalizedAt: _finalizedAt, finalizedBy: _finalizedBy, ...rest } = prescription; // eslint-disable-line @typescript-eslint/no-unused-vars
+    const finalized = rest.status === "final" ? { finalizedAt: serverTimestamp(), finalizedBy: account.name } : {};
+    return setDoc(doc(firestore, "prescriptions", rest.id), { ...defined(rest), ...finalized, updatedBy: account.user.uid, updatedAt: serverTimestamp() });
   },
-
-  subscribeDatabase(account, onUpdate, onError) {
-    const clinicId = account.clinicId;
-    let clinics: Clinic[] = [], patients: Patient[] = [], appointments: Appointment[] = [], reminders: Reminder[] = [];
-    const ready = new Set<string>();
-    let stopped = false;
-    const notify = () => {
-      if (stopped || ready.size !== 4) return;
-      onUpdate({ version: 1, activeClinicId: clinicId ?? clinics[0]?.id ?? "", clinics, patients, appointments, reminders });
-    };
-    const listen = <T,>(name: string, update: (records: T[]) => void) => {
-      if (account.role !== "admin" && name === "clinics") {
-        return onSnapshot(doc(firestore, "clinics", clinicId!), snap => {
-          update(snap.exists() ? [snap.data() as T] : []);
-          ready.add(name); notify();
-        }, onError);
+  async sendPrescription(prescriptionId, pdf, fileName) {
+    try { return await callFunction<unknown, SendResult>("sendPrescription", { prescriptionId, pdf, fileName, requestId: crypto.randomUUID() }); }
+    catch (error) {
+      // It may have gone through. Each try is a new message, so nobody should be told simply to try again.
+      if (error instanceof ServerUnreachable) return { status: "unknown", error: "WhatsApp did not confirm the message. Check Messages before sending again." };
+      throw error;
+    }
+  },
+  subscribeStaff: (clinicId, onUpdate, onError) => onSnapshot(inClinic("users", clinicId), snap => onUpdate(snap.docs.map(d => { const v = d.data(); return { uid: d.id, clinicId: v.clinicId, name: v.name || v.email, email: v.email, role: v.role || "owner", doctorId: v.doctorId || "", active: v.active !== false } as StaffMember; })), onError),
+  createStaff: input => callFunction("createStaff", input),
+  updateStaff: input => callFunction("updateStaff", input),
+  staffSetupLink: async staffUid => (await callFunction<{ uid: string }, { setupLink: string }>("staffSetupLink", { uid: staffUid })).setupLink,
+  createClinic: (clinic, ownerName, ownerEmail) => callFunction("createClinic", { clinic, ownerName, ownerEmail }),
+  subscribeAuditLog: (clinicId, onUpdate, onError) => onSnapshot(query(collection(firestore, "auditLog"), where("clinicId", "==", clinicId), orderBy("at", "desc"), limit(200)), snap => onUpdate(snap.docs.map(d => { const v = d.data({ serverTimestamps: "estimate" }); return { ...v, id: d.id, at: iso(v.at) } as AuditEntry; })), onError),
+  async exportClinicData(clinicId, onProgress) {
+    await callFunction("recordDataExport", { clinicId });
+    const out: Record<string, unknown[]> = {};
+    for (const name of EXPORTED) {
+      onProgress?.(name);
+      const items: unknown[] = [];
+      let last: QueryDocumentSnapshot | undefined;
+      for (;;) {
+        const page = await getDocs(query(collection(firestore, name), where("clinicId", "==", clinicId), orderBy(documentId()), limit(EXPORT_PAGE), ...(last ? [startAfter(last)] : [])));
+        items.push(...page.docs.map(d => plainValue({ id: d.id, ...d.data() })));
+        if (page.size < EXPORT_PAGE) break;
+        last = page.docs[page.docs.length - 1];
       }
-      return onSnapshot(scoped(account, name), snap => {
-        update(snap.docs.map(d => d.data() as T));
-        ready.add(name); notify();
-      }, onError);
-    };
-    const unsubs = [
-      listen<Clinic>("clinics", value => { clinics = value; }),
-      listen<Patient>("patients", value => { patients = value; }),
-      listen<Appointment>("appointments", value => { appointments = value; }),
-      listen<Reminder>("reminders", value => { reminders = value; }),
-    ];
-    return () => { stopped = true; unsubs.forEach(unsub => unsub()); };
+      out[name] = items;
+    }
+    return out;
   },
 };
 

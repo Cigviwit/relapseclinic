@@ -1,4 +1,3 @@
-"use client";
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { AlertTriangle, CircleHelp, History, NotebookPen, Pencil, Plus, ShieldCheck, Trash2 } from 'lucide-react';
@@ -38,7 +37,7 @@ export function MedicalSummary({ w, live, onEdit }: { w: Workspace; live: Live<P
   const r = live.status === 'ready' ? live.value : null;
   const blocks = r ? [['Conditions', r.conditions], ['Current medicines', r.medications], ['Surgeries', r.surgeries], ['Family history', r.familyHistory], ['Tobacco', habitLabel[r.tobacco]], ['Alcohol', habitLabel[r.alcohol]], ['Notes', r.notes]].filter(([, v]) => v) : [];
   return <>
-    <div className="sec-row"><h2 className="sec-title">Medical background</h2>{live.status === 'ready' && <button className="btn-link" onClick={onEdit}><Pencil size={13} />{r ? 'Edit' : 'Add'}</button>}</div>
+    <div className="sec-row"><h2 className="sec-title">Medical background</h2>{live.status === 'ready' && w.can.writeRecords && <button className="btn-link" onClick={onEdit}><Pencil size={13} />{r ? 'Edit' : 'Add'}</button>}</div>
     {live.status === 'error' && <p className="note note-warn">The medical record could not be loaded.</p>}
     {live.status === 'ready' && (blocks.length ? <dl className="med-bg">{blocks.map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}</dl> : <p className="muted">Nothing recorded yet.</p>)}
     {r && <p className="muted small rec-stamp">Updated {r.updatedAt ? shortDate(localDate(r.updatedAt, w.clinic.timezone)) : 'just now'}</p>}
@@ -138,7 +137,7 @@ export function NoteComposer({ w, patientId, correcting, onDone }: { w: Workspac
     e.preventDefault();
     if (busy) return;
     try {
-      const note = prepareNote({ id: crypto.randomUUID(), clinicId: w.clinic.id, patientId, doctorId, date, text, vitals, corrects: correcting?.id, createdAt: '', createdBy: '' }, w.now.date);
+      const note = prepareNote({ id: crypto.randomUUID(), clinicId: w.clinic.id, patientId, doctorId, date, text, vitals, corrects: correcting?.id, createdAt: '', createdBy: '', createdByName: w.account.name }, w.now.date);
       setBusy(true);
       await w.repo.addPatientNote(w.account, note);
       toast.success(correcting ? 'Correction saved' : 'Note saved');
@@ -163,10 +162,10 @@ export function NoteCard({ w, note, all, onCorrect }: { w: Workspace; note: Pati
   const written = localDate(note.createdAt, w.clinic.timezone);
   const vitals = note.vitals ? vitalsLine(note.vitals) : '';
   return <article className="note-card">
-    <div className="note-card-top"><span className="row-tight"><NotebookPen size={14} /><strong>{shortDate(note.date)}</strong></span><button className="btn-link" onClick={onCorrect}>Correct</button></div>
+    <div className="note-card-top"><span className="row-tight"><NotebookPen size={14} /><strong>{shortDate(note.date)}</strong></span>{w.can.writeNotes && <button className="btn-link" onClick={onCorrect}>Correct</button>}</div>
     {note.text && <p className="note-text">{note.text}</p>}
     {vitals && <p className="muted small">{vitals}</p>}
-    <small className="muted">{w.doctorName(note.doctorId)}{written && written !== note.date ? ` · written ${shortDate(written)}` : ''}</small>
+    <small className="muted">{note.createdByName || w.doctorName(note.doctorId)}{written && written !== note.date ? ` · written ${shortDate(written)}` : ''}</small>
     {earlier.length > 0 && <details className="note-earlier"><summary>Corrected · show original</summary>{earlier.map(n => <div key={n.id}><small className="muted">Written {n.createdAt ? shortDate(localDate(n.createdAt, w.clinic.timezone)) : ''}</small><p className="note-text"><s>{n.text}</s></p></div>)}</details>}
   </article>;
 }

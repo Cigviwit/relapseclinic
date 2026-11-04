@@ -91,6 +91,23 @@ textarea.input { height: auto; padding: 9px 11px; resize: vertical; line-height:
 .form-foot { display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding-top: 4px; }
 .form-foot .muted { margin-right: auto; font-size: .82rem; }
 .form-error { color: var(--danger); background: var(--danger-soft); padding: 9px 12px; border-radius: var(--r-sm); font-size: .87rem; font-weight: 500; }
+.rxb-fields { border: 0; padding: 0; margin: 0; min-width: 0; display: contents; }
+.rxb-fields:disabled input, .rxb-fields:disabled textarea, .rxb-fields:disabled select { background: var(--surface-2, #f4f6f5); color: inherit; opacity: 1; }
+.is-fixed { pointer-events: none; }
+.staff-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); flex-wrap: wrap; }
+.staff-row:first-of-type { border-top: 0; }
+.staff-row > div:first-child { min-width: 180px; flex: 1; }
+.staff-row small { display: block; color: var(--muted, #667); }
+.staff-row.is-off strong { text-decoration: line-through; opacity: .6; }
+.setup-link { word-break: break-all; font-size: .82rem; }
+.activity { list-style: none; margin: 0; padding: 0; }
+.activity li { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-top: 1px solid var(--line); flex-wrap: wrap; }
+.activity li:first-child { border-top: 0; }
+.activity small { color: var(--muted, #667); }
+.lock-screen { width: 100vw; height: 100vh; max-width: 100vw; max-height: 100vh; margin: 0; background: var(--bg, #f6f7f6); display: grid; place-items: center; }
+.lock-screen::backdrop { background: var(--bg, #f6f7f6); }
+.lock-card { width: min(380px, calc(100vw - 32px)); display: flex; flex-direction: column; gap: 14px; background: var(--surface, #fff); padding: 28px; border-radius: 16px; box-shadow: 0 8px 30px rgba(14, 26, 24, .1); }
+.crash { max-width: 480px; margin: 12vh auto; padding: 0 16px; display: flex; flex-direction: column; gap: 14px; align-items: flex-start; }
 .fs { border: 0; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 12px; }
 .fs legend { font-weight: 700; font-size: .95rem; margin-bottom: 4px; padding: 0; }
 .fs + .fs { border-top: 1px solid var(--line); padding-top: 18px; }

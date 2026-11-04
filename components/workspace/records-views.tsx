@@ -1,4 +1,3 @@
-"use client";
 import { useMemo, useState } from 'react';
 import { AlertCircle, FileText, MessageCircle, Plus, Search } from 'lucide-react';
 import { clockLabel, dateLabel } from '@/lib/clinic';
@@ -17,7 +16,7 @@ export function PrescriptionsView({ w }: { w: Workspace }) {
   return <div className="page">
     <header className="page-head">
       <div><p className="eyebrow">{todayCount} written today</p><h1>Prescriptions</h1></div>
-      <button className="btn btn-primary" onClick={() => w.writeRx()}><Plus size={16} />New prescription</button>
+      {w.can.writeRx && <button className="btn btn-primary" onClick={() => w.writeRx()}><Plus size={16} />New prescription</button>}
     </header>
     <section className="card card-flush">
       <div className="card-pad"><div className="search"><Search size={16} /><input className="input" type="search" placeholder="Search patient, diagnosis or medicine" value={q} onChange={e => setQ(e.target.value)} aria-label="Search prescriptions" /></div></div>
@@ -28,9 +27,9 @@ export function PrescriptionsView({ w }: { w: Workspace }) {
           <span className="td-who"><Avatar name={p?.name || '?'} size="sm" />{p?.name || 'Patient removed'}</span>
           <span className="td-main"><strong>{rx.diagnosis || '—'}</strong><small>{rx.medicines.map(m => m.name).join(', ') || 'Advice only'}</small></span>
           <span className="td-muted">{w.doctorName(rx.doctorId)}</span>
-          <span>{rx.sentAt ? <Status status="accepted">Sent</Status> : <Status status="scheduled">Saved</Status>}</span>
+          <span>{rx.sentAt ? <Status status="accepted">Sent</Status> : rx.status === 'draft' ? <Status status="late">Draft</Status> : <Status status="scheduled">Final</Status>}</span>
         </button>; })}
-      </div> : <Empty icon={<FileText size={22} />} title={q ? 'No matches' : 'No prescriptions yet'}>Write one from Today’s queue, a patient’s page, or press <kbd className="kbd">R</kbd>.</Empty>}
+      </div> : <Empty icon={<FileText size={22} />} title={q ? 'No matches' : 'No prescriptions yet'}>{w.can.writeRx ? <>Write one from Today’s queue, a patient’s page, or press <kbd className="kbd">R</kbd>.</> : 'Prescriptions from the last 6 months appear here.'}</Empty>}
     </section>
   </div>;
 }
@@ -44,7 +43,7 @@ export function MessagesView({ w }: { w: Workspace }) {
   return <div className="page">
     <header className="page-head"><div><p className="eyebrow">Automatic WhatsApp</p><h1>Messages</h1></div>
       <Chips label="Filter" size="sm" value={filter} onChange={setFilter} options={[{ value: 'issues', label: `Issues (${issues.length})` }, { value: 'all', label: `All (${w.deliveries.length})` }]} /></header>
-    <p className="lede">{w.clinic.prescriptionsEnabled && 'Prescriptions sent from the builder appear here too. '}Patients with consent get a confirmation when booked, a reminder 2 days before and at 8 AM on the day. Marking a visit Missed sends a follow-up right away and again 7 days after the visit. “Sent” means the provider accepted it.</p>
+    <p className="lede">{w.rxOn && 'Prescriptions sent from the builder appear here too. '}Patients with consent get a confirmation when booked, a reminder 2 days before and at 8 AM on the day. Marking a visit Missed sends a follow-up right away and again 7 days after the visit. “Sent” means the provider accepted it.</p>
     <section className="card card-flush">
       {list.length ? <div className="table" role="table">
         <div className="tr th" role="row"><span>Visit</span><span>Patient</span><span>Message</span><span>Language</span><span>Status</span></div>

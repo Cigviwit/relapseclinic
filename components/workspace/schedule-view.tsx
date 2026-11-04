@@ -1,5 +1,4 @@
-"use client";
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ChevronLeft, ChevronRight, Plus } from 'lucide-react';
 import { addDays, clockLabel, dateLabel, minutes, type Appointment } from '@/lib/clinic';
 import { Chips } from '../kit';
@@ -32,6 +31,11 @@ export default function ScheduleView({ w, date, setDate }: { w: Workspace; date:
   const on = (d: string) => w.appointments.filter(a => a.date === d && a.status !== 'cancelled' && (w.doctorFilter === 'all' || a.doctorId === w.doctorFilter)).sort((a, b) => a.time.localeCompare(b.time));
   const shift = (n: number) => setDate(view === 'month' ? addMonths(date, n) : addDays(date, n * (view === 'day' ? 1 : 7)));
   const nowMin = minutes(now.time);
+  // Looking further back than the workspace keeps live: fetch that stretch once.
+  const rangeFrom = view === 'month' ? monthStart : view === 'week' ? week[0] : date;
+  const rangeTo = view === 'month' ? monthEnd : view === 'week' ? week[6] : date;
+  const { loadRange } = w;
+  useEffect(() => { loadRange(rangeFrom, rangeTo); }, [loadRange, rangeFrom, rangeTo]);
 
   const block = (a: Appointment) => {
     const p = w.patient(a.patientId);

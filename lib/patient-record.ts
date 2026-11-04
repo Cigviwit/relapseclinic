@@ -14,7 +14,7 @@ export type PatientRecord = {
   version: number; updatedAt: string; updatedBy: string;
 };
 /** Append-only: a mistake is fixed by a new note whose `corrects` names the old one. */
-export type PatientNote = { id: string; clinicId: string; patientId: string; doctorId: string; date: string; text: string; vitals?: Vitals; corrects?: string; createdAt: string; createdBy: string };
+export type PatientNote = { id: string; clinicId: string; patientId: string; doctorId: string; date: string; text: string; vitals?: Vitals; corrects?: string; createdAt: string; createdBy: string; createdByName?: string };
 export type RecordChange = { field: string; from: unknown; to: unknown };
 /** Written only by the recordPatientRecordChange function. */
 export type RecordAudit = { id: string; clinicId: string; patientId: string; version: number; changes: RecordChange[]; changedAt: string; changedBy: string };

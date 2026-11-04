@@ -1,7 +1,9 @@
-"use client";
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { Building2, FileText, IndianRupee, LogOut, Mail } from 'lucide-react';
+import { roleLabel } from '@/lib/permissions';
+import { StaffSettings } from './staff-settings';
+import { ActivityLog, AutoLockSetting, DataExport, TwoStepSetting } from './security-settings';
 import { dateLabel, minutes, today, type Clinic } from '@/lib/clinic';
 import { authService } from '@/lib/auth-service';
 import { ClinicForm } from '../clinic-forms';
@@ -24,7 +26,7 @@ export default function SettingsView({ w, onCreateClinic, demo }: { w: Workspace
     // Keep pad details from the latest clinic record; this form only edits clinic and doctor basics.
     const doctors = form.doctors.map(d => { const live = clinic.doctors.find(x => x.id === d.id); return live ? { ...live, name: d.name, specialty: d.specialty, email: d.email } : d; });
     // The form may hold an older copy; the prescription switch is only changed by the administrator below.
-    w.repo.saveClinic({ ...form, doctors, ...(clinic.rxPad ? { rxPad: clinic.rxPad } : {}), ...(clinic.prescriptionsEnabled !== undefined ? { prescriptionsEnabled: clinic.prescriptionsEnabled } : {}), ...(clinic.billingEnabled !== undefined ? { billingEnabled: clinic.billingEnabled } : {}), ...(clinic.billing ? { billing: clinic.billing } : {}) }).then(() => toast.success('Clinic settings saved')).catch(e => toast.error(e.message));
+    w.repo.saveClinic({ ...form, doctors, ...(clinic.rxPad ? { rxPad: clinic.rxPad } : {}), ...(clinic.prescriptionsEnabled !== undefined ? { prescriptionsEnabled: clinic.prescriptionsEnabled } : {}), ...(clinic.billingEnabled !== undefined ? { billingEnabled: clinic.billingEnabled } : {}), ...(clinic.billing ? { billing: clinic.billing } : {}), ...(clinic.autoLockMinutes !== undefined ? { autoLockMinutes: clinic.autoLockMinutes } : {}) }).then(() => toast.success('Clinic settings saved')).catch(e => toast.error(e.message));
   }
   function savePad(rxPad: RxPad, doctors: Doctor[]) {
     w.repo.saveClinic({ ...clinic, rxPad, doctors }).then(() => toast.success('Prescription pad saved')).catch(e => toast.error(e.message));
@@ -40,9 +42,8 @@ export default function SettingsView({ w, onCreateClinic, demo }: { w: Workspace
     if (demo) return toast.info('Demo mode — no emails are sent.');
     setSending(true);
     try {
-      const [{ getFunctions, httpsCallable }, { app }] = await Promise.all([import('firebase/functions'), import('@/lib/firebase')]);
-      const send = httpsCallable<{ clinicId: string; requestId: string }, { date: string; accepted: number; failed: number; unknown: number; already_sent: number }>(getFunctions(app, 'asia-south1'), 'sendDoctorDigestNow');
-      const { data } = await send({ clinicId: clinic.id, requestId: crypto.randomUUID() });
+      const { callFunction } = await import('@/lib/firebase');
+      const data = await callFunction<{ clinicId: string; requestId: string }, { date: string; accepted: number; failed: number; unknown: number; already_sent: number }>('sendDoctorDigestNow', { clinicId: clinic.id, requestId: crypto.randomUUID() }, 300000);
       const summary = `${data.accepted} of ${clinic.doctors.length} doctor emails accepted for ${dateLabel(data.date)}`;
       if (data.failed || data.unknown) toast.error(`${summary}. ${data.failed} failed; ${data.unknown} uncertain.`);
       else if (data.already_sent) toast.info(`${summary}. ${data.already_sent} already sent for this request.`);
@@ -53,33 +54,40 @@ export default function SettingsView({ w, onCreateClinic, demo }: { w: Workspace
 
   return <div className="page">
     <header className="page-head"><div><p className="eyebrow">{clinic.name}</p><h1>Settings</h1></div></header>
-    {clinic.prescriptionsEnabled && <section className="card" id="pad"><h2 className="card-title"><FileText size={16} />Prescription pad</h2><PadSettings key={clinic.id} clinic={clinic} onSave={savePad} /></section>}
-    {w.billingOn && <section className="card" id="billing-settings"><h2 className="card-title"><IndianRupee size={16} />Billing</h2><BillingSettingsForm key={clinic.id} w={w} /></section>}
+    {w.can.editClinic && clinic.prescriptionsEnabled && <section className="card" id="pad"><h2 className="card-title"><FileText size={16} />Prescription pad</h2><PadSettings key={clinic.id} clinic={clinic} onSave={savePad} /></section>}
+    {w.can.editClinic && w.billingOn && <section className="card" id="billing-settings"><h2 className="card-title"><IndianRupee size={16} />Billing</h2><BillingSettingsForm key={clinic.id} w={w} /></section>}
     <div className="split">
-      <section className="card"><ClinicForm key={clinic.id} clinic={clinic} onSave={save} /></section>
+      <div className="rail">
+        {w.can.editClinic && <section className="card"><ClinicForm key={clinic.id} clinic={clinic} onSave={save} /></section>}
+        {w.can.manageStaff && <section className="card" id="staff"><StaffSettings key={clinic.id} w={w} /></section>}
+        {w.can.readAudit && <section className="card" id="activity"><ActivityLog key={clinic.id} w={w} /></section>}
+        {w.can.exportData && <section className="card" id="data"><DataExport w={w} /></section>}
+      </div>
       <aside className="rail">
-        <section className="card">
+        {w.account.role !== 'billing' && <section className="card">
           <h2 className="card-title"><Mail size={16} />Doctor email digest</h2>
           <p className="muted">Tomorrow’s list · {clinic.doctorDigestEnabled ? `daily at ${clinic.doctorDigestTime || '18:00'}` : 'automatic sending off'}</p>
           <button className="btn btn-soft btn-block" onClick={sendDigest} disabled={sending || missingEmail}>{sending ? 'Sending…' : 'Send tomorrow’s list now'}</button>
           {missingEmail && <p className="field-hint">Add an email for every doctor to enable sending.</p>}
           <ul className="mini-list">{digests.map(r => <li key={r.id} className="digest"><span><strong>{w.doctorName(r.doctorId)}</strong><small>{dateLabel(r.date, { day: 'numeric', month: 'short' })} · {r.count} appt{r.count === 1 ? '' : 's'}{r.mode === 'manual' ? ' · manual' : ''}</small>{r.error && <small className="text-danger">{r.error}</small>}</span><Status status={r.status} /></li>)}</ul>
           {!digests.length && <p className="muted">No digests sent yet.</p>}
-        </section>
+        </section>}
+        {w.can.editClinic && <section className="card"><AutoLockSetting w={w} /></section>}
+        {!demo && <section className="card"><TwoStepSetting /></section>}
         <section className="card">
           <h2 className="card-title">Account</h2>
-          <p className="muted break">Signed in as <strong>{w.account.user.email}</strong></p>
+          <p className="muted break"><strong>{w.account.name}</strong> · {roleLabel(w.account.role)}<br />{w.account.user.email}</p>
           <button className="btn btn-ghost btn-block" onClick={() => authService.signOut()}><LogOut size={15} />Sign out</button>
         </section>
-        {w.account.role === 'admin' && <section className="card"><h2 className="card-title"><Building2 size={16} />Clinic accounts</h2><p className="muted">Create a separate login for each clinic. Switch clinics from the sidebar.</p><button className="btn btn-soft btn-block" onClick={onCreateClinic}>Create clinic account</button></section>}
-        {w.account.role === 'admin' && <section className="card">
+        {w.can.adminFeatures && <section className="card"><h2 className="card-title"><Building2 size={16} />Clinics</h2><p className="muted">Create a clinic and its owner’s login. Switch clinics from the sidebar.</p><button className="btn btn-soft btn-block" onClick={onCreateClinic}>Create clinic</button></section>}
+        {w.can.adminFeatures && <section className="card">
           <h2 className="card-title"><FileText size={16} />Digital prescriptions</h2>
           <p className="muted">Off for every clinic until you turn it on here. Clinics cannot change this themselves.</p>
           {w.db.clinics.map(c => <label className="check check-box" key={c.id}><input type="checkbox" checked={c.prescriptionsEnabled === true} onChange={e => togglePrescriptions(c, e.target.checked)} /><span><strong>{c.name}</strong><small>{c.address}</small></span></label>)}
         </section>}
-        {w.account.role === 'admin' && <section className="card">
+        {w.can.adminFeatures && <section className="card">
           <h2 className="card-title"><IndianRupee size={16} />Billing</h2>
-          <p className="muted">Off for every clinic until you turn it on here. Clinics cannot change this themselves. You cannot see a clinic’s bills.</p>
+          <p className="muted">Off for every clinic until you turn it on here. Clinics cannot change this themselves.</p>
           {w.db.clinics.map(c => <label className="check check-box" key={c.id}><input type="checkbox" checked={c.billingEnabled === true} onChange={e => toggleBilling(c, e.target.checked)} /><span><strong>{c.name}</strong><small>{c.address}</small></span></label>)}
         </section>}
       </aside>
