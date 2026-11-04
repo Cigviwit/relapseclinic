@@ -89,3 +89,58 @@ test('dental prescriptions carry teeth and treatment into the message',()=>{
  assert.equal(padFor({specialty:'dental'},'general').specialty,'general');
  assert.ok(specialties.dental.sections.includes('teeth'));
 });
+import { ageLabel, ageYears, estimatedDob, prepareRecord, prepareNote, blankPatientRecord, currentNotes, earlierVersions, patientTimeline, historyLine, rxPrefill, applyRxPrefill, emptyPrefill, recordChanges } from '../lib/patient-record.ts';
+test('age comes from date of birth, in months for infants and marked when estimated',()=>{
+ assert.equal(ageLabel({dob:'1990-06-15',dobEstimated:false},'2026-06-14'),'35 y');
+ assert.equal(ageLabel({dob:'1990-06-15',dobEstimated:false},'2026-06-15'),'36 y');
+ assert.equal(ageLabel({dob:'2026-01-20',dobEstimated:false},'2026-09-19'),'7 mo');
+ assert.equal(ageLabel({dob:estimatedDob(45,'2026-11-04'),dobEstimated:true},'2026-11-04'),'~45 y');
+ assert.equal(estimatedDob(1,'2024-02-29'),'2023-03-01');
+ assert.equal(ageYears('2026-01-20','2026-09-19'),'');assert.equal(ageYears('','2026-09-19'),'');
+});
+test('record validation keeps allergy status and list in step',()=>{
+ const r=blankPatientRecord('c','p');
+ assert.throws(()=>prepareRecord({...r,allergyStatus:'known'},'2026-11-04'),/allergy/);
+ assert.throws(()=>prepareRecord({...r,allergyStatus:'known',allergies:[{id:'a',substance:' ',reaction:'Rash',severity:''}]},'2026-11-04'),/allergic to/);
+ const known=prepareRecord({...r,allergyStatus:'known',allergies:[{id:'a',substance:' Penicillin ',reaction:'',severity:'severe'},{id:'b',substance:'',reaction:'',severity:''}]},'2026-11-04');
+ assert.deepEqual(known.allergies.map(a=>a.substance),['Penicillin']);
+ assert.deepEqual(prepareRecord({...known,allergyStatus:'none'},'2026-11-04').allergies,[]);
+ assert.throws(()=>prepareRecord({...r,dob:'2030-01-01'},'2026-11-04'),/future/);
+ assert.throws(()=>prepareRecord({...r,dob:'1800-01-01'},'2026-11-04'),/130/);
+ assert.equal(prepareRecord({...r,emergencyPhone:'98765 43210'},'2026-11-04').emergencyPhone,'+919876543210');
+ assert.throws(()=>prepareRecord({...r,emergencyPhone:'abc'},'2026-11-04'));
+});
+const note=(id,date,corrects)=>({id,clinicId:'c',patientId:'p',doctorId:'d',date,text:id,createdAt:'2026-11-01T10:00:00.000Z',createdBy:'u',...(corrects?{corrects}:{})});
+test('notes need content, cannot be future-dated and drop empty optional fields',()=>{
+ const n={...note('n','2026-11-04'),corrects:undefined,vitals:{bp:'',pulse:'',temp:'',weight:'',spo2:''}};
+ const clean=prepareNote(n,'2026-11-04');assert.ok(!('vitals' in clean));assert.ok(!('corrects' in clean));
+ assert.throws(()=>prepareNote({...n,text:' '},'2026-11-04'),/note/);
+ assert.doesNotThrow(()=>prepareNote({...n,text:'',vitals:{...n.vitals,weight:'70'}},'2026-11-04'));
+ assert.throws(()=>prepareNote({...n,date:'2026-11-05'},'2026-11-04'),/future/);
+ assert.throws(()=>prepareNote({...n,doctorId:''},'2026-11-04'),/doctor/);
+});
+test('a correction replaces a note without losing the original',()=>{
+ const all=[note('a','2026-11-01'),note('b','2026-11-01','a'),note('c','2026-11-01','b'),note('z','2026-11-02')];
+ assert.deepEqual(currentNotes(all).map(n=>n.id),['c','z']);
+ assert.deepEqual(earlierVersions(all[2],all).map(n=>n.id),['b','a']);
+ assert.deepEqual(earlierVersions({...all[0],corrects:'a'},all).map(n=>n.id),['a']);
+});
+test('timeline is newest day first, with notes above the visit they belong to',()=>{
+ const t=patientTimeline([{id:'v1',date:'2026-11-01',time:'10:00'},{id:'v2',date:'2026-11-03',time:'10:00'}],[{id:'r1',date:'2026-11-01',createdAt:'x'}],[note('n1','2026-11-01'),note('old','2026-11-01'),note('fix','2026-11-01','old')]);
+ assert.deepEqual(t.map(x=>x.item.id),['v2','n1','fix','r1','v1']);
+});
+test('prescription prefill carries the record and never leaks between patients',()=>{
+ const r={...blankPatientRecord('c','p'),dob:'1990-01-01',sex:'F',allergyStatus:'known',allergies:[{id:'a',substance:'Penicillin',reaction:'',severity:''},{id:'b',substance:'Sulfa',reaction:'',severity:''}],conditions:'Diabetes\nAsthma'};
+ assert.equal(historyLine(r),'Allergic to Penicillin, Sulfa; Diabetes, Asthma');
+ assert.equal(historyLine(blankPatientRecord('c','p')),'');
+ assert.equal(historyLine({...blankPatientRecord('c','p'),allergyStatus:'none'}),'No known allergies');
+ const first=rxPrefill(r,'2026-11-04');assert.deepEqual([first.age,first.sex],['36','F']);
+ const draft=applyRxPrefill({age:'',sex:'',history:'',id:'rx'},emptyPrefill,first);assert.equal(draft.history,first.history);assert.equal(draft.id,'rx');
+ const next=applyRxPrefill(draft,first,rxPrefill(null,'2026-11-04'));assert.deepEqual([next.age,next.sex,next.history],['','','']);
+ const typed=applyRxPrefill({...draft,history:'Typed by doctor'},first,emptyPrefill);assert.equal(typed.history,'Typed by doctor');
+});
+test('record changes match the audit function on bookkeeping and blanks',()=>{
+ const r=blankPatientRecord('c','p');
+ assert.deepEqual(recordChanges(r,{...r,version:2,updatedAt:'x'}),[]);
+ assert.deepEqual(recordChanges(r,{...r,conditions:'Asthma'}),[{field:'conditions',from:'',to:'Asthma'}]);
+});

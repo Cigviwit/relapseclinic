@@ -13,6 +13,8 @@ export type RxOptions = { patientId?: string; doctorId?: string; appointmentId?:
 /** Everything a workspace page needs, computed once per render in the shell. */
 export type Workspace = {
   account: Account; db: Database; clinic: Clinic; repo: Repository;
+  /** False for the platform admin: patient records and notes are private to the clinic. */
+  clinicalAccess: boolean;
   patients: Patient[]; appointments: Appointment[]; prescriptions: Prescription[];
   deliveries: MessageDelivery[]; digests: DoctorDigestDelivery[];
   patient: (id: string) => Patient | undefined; doctor: (id: string) => Doctor | undefined; doctorName: (id: string) => string;

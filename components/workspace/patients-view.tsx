@@ -1,10 +1,13 @@
 "use client";
 import { useMemo, useState } from 'react';
-import { ArrowLeft, CalendarPlus, Check, FileText, MessageCircle, Pencil, Phone, Repeat2, Search, UserPlus, Users, X } from 'lucide-react';
+import { ArrowLeft, CalendarPlus, Check, FileText, Lock, MessageCircle, NotebookPen, Pencil, Phone, Repeat2, Search, UserPlus, Users, X } from 'lucide-react';
 import { clockLabel, dateLabel, reminderMessage, reminderStatus } from '@/lib/clinic';
 import { patientLanguageLabel } from '@/lib/patient-language';
 import { searchPatients } from '@/lib/patient-search';
-import { Avatar, Empty, Status } from '../kit';
+import { patientTimeline, type PatientNote } from '@/lib/patient-record';
+import { usePatientNotes, usePatientRecord } from '@/hooks/use-patient-record';
+import { Avatar, Empty, Modal, Status } from '../kit';
+import { AllergyBanner, MedicalSummary, NoteCard, NoteComposer, PatientRecordForm, RecordFacts } from './patient-record';
 import { PatientBilling } from '../billing/patient-billing';
 import type { Workspace } from './types';
 
@@ -31,7 +34,7 @@ export default function PatientsView({ w, selectedId, select }: { w: Workspace; 
     </section>
 
     <section className="pd">
-      {p ? <PatientDetail w={w} id={p.id} onBack={() => select(null)} /> : <div className="card pd-empty"><Empty icon={<Users size={22} />} title="Select a patient">History, prescriptions and quick actions appear here.</Empty></div>}
+      {p ? <PatientDetail key={p.id} w={w} id={p.id} onBack={() => select(null)} /> : <div className="card pd-empty"><Empty icon={<Users size={22} />} title="Select a patient">Allergies, medical background, visit history and quick actions appear here.</Empty></div>}
     </section>
   </div>;
 }
@@ -44,6 +47,12 @@ function PatientDetail({ w, id, onBack }: { w: Workspace; id: string; onBack: ()
   const rxs = w.prescriptions.filter(r => r.patientId === id).sort((a, b) => (b.date + b.createdAt).localeCompare(a.date + a.createdAt));
   const reminders = w.db.reminders.filter(r => r.patientId === id && r.clinicId === w.clinic.id);
   const missed = visits.filter(a => a.status === 'missed').length;
+  const record = usePatientRecord(w.repo, w.clinic.id, w.clinicalAccess ? id : '');
+  const notes = usePatientNotes(w.repo, w.clinic.id, w.clinicalAccess ? id : '');
+  const [editing, setEditing] = useState(false);
+  const [composer, setComposer] = useState<{ correcting?: PatientNote } | null>(null);
+  const allNotes = notes.status === 'ready' ? notes.value : [];
+  const timeline = patientTimeline(past, rxs, allNotes);
 
   return <div className="card pd-card">
     <button className="btn-link pd-back" onClick={onBack}><ArrowLeft size={16} />All patients</button>
@@ -54,6 +63,7 @@ function PatientDetail({ w, id, onBack }: { w: Workspace; id: string; onBack: ()
         <div className="row-tight">{p.consent ? <Status status="completed"><Check size={12} /> WhatsApp consent</Status> : <Status status="missed"><X size={12} /> No WhatsApp consent</Status>}{missed > 0 && <Status status="late">{missed} missed visit{missed === 1 ? '' : 's'}</Status>}</div>
       </div>
     </div>
+    {w.clinicalAccess ? <><AllergyBanner live={record} /><RecordFacts r={record.value} today={w.now.date} /></> : <p className="allergy note"><Lock size={16} /><span>Medical records and visit notes are private to the clinic. Administrator accounts cannot open them.</span></p>}
     <div className="pd-actions">
       <button className="btn btn-primary" onClick={() => w.book({ patientId: id })}><CalendarPlus size={16} />Book</button>
       {w.clinic.prescriptionsEnabled && <button className="btn btn-soft" onClick={() => w.writeRx({ patientId: id })}><FileText size={16} />Write Rx</button>}
@@ -67,19 +77,26 @@ function PatientDetail({ w, id, onBack }: { w: Workspace; id: string; onBack: ()
       <section>
         <h2 className="sec-title">Upcoming</h2>
         {upcoming.length ? upcoming.map(a => <button key={a.id} className="visit visit-up" onClick={() => w.openAppointment(a)}><span className="visit-date"><strong>{dateLabel(a.date, { day: 'numeric', month: 'short' })}</strong><small>{clockLabel(a.time)}</small></span><span><strong>{a.reason}</strong><small>{w.doctorName(a.doctorId)}</small></span><Status status={a.status} /></button>) : <p className="muted">No upcoming visits.</p>}
-        <h2 className="sec-title">History</h2>
-        {past.length ? past.map(a => <button key={a.id} className="visit" onClick={() => w.openAppointment(a)}><span className="visit-date"><strong>{dateLabel(a.date, { day: 'numeric', month: 'short' })}</strong><small>{a.date.slice(0, 4)}</small></span><span><strong>{a.reason}</strong><small>{w.doctorName(a.doctorId)} · {clockLabel(a.time)}</small></span><Status status={a.status} /></button>) : <p className="muted">No past visits.</p>}
+        <div className="sec-row"><h2 className="sec-title">History</h2>{w.clinicalAccess && !composer && notes.status !== 'error' && <button className="btn-link" onClick={() => setComposer({})}><NotebookPen size={13} />Add note</button>}</div>
+        {composer && <NoteComposer key={composer.correcting?.id || 'new'} w={w} patientId={id} correcting={composer.correcting} onDone={() => setComposer(null)} />}
+        {notes.status === 'error' && <p className="note note-warn">Visit notes could not be loaded.</p>}
+        {timeline.length ? timeline.map(t => t.kind === 'note' ? <NoteCard key={t.item.id} w={w} note={t.item} all={allNotes} onCorrect={() => setComposer({ correcting: t.item })} />
+          : t.kind === 'rx' ? <button key={t.item.id} className="rx-card" onClick={() => w.writeRx({ item: t.item })}>
+            <div className="rx-card-top"><strong><FileText size={14} /> {dateLabel(t.date, { day: 'numeric', month: 'short', year: 'numeric' })}</strong>{t.item.sentAt ? <Status status="accepted">Sent</Status> : <Status status="scheduled">Saved</Status>}</div>
+            {t.item.diagnosis && <p className="rx-dx">{t.item.diagnosis}</p>}
+            <small>{t.item.medicines.map(m => m.name).join(', ') || 'Advice only'}</small>
+          </button>
+          : <button key={t.item.id} className="visit" onClick={() => w.openAppointment(t.item)}><span className="visit-date"><strong>{dateLabel(t.date, { day: 'numeric', month: 'short' })}</strong><small>{t.date.slice(0, 4)}</small></span><span><strong>{t.item.reason}</strong><small>{w.doctorName(t.item.doctorId)} · {clockLabel(t.item.time)}</small></span><Status status={t.item.status} /></button>)
+          : (notes.status === 'ready' || !w.clinicalAccess) && !composer && <p className="muted">No history yet.</p>}
       </section>
       <section>
+        {w.clinicalAccess && <MedicalSummary w={w} live={record} onEdit={() => setEditing(true)} />}
         {w.billingOn && <PatientBilling w={w} patientId={id} />}
-        {w.clinic.prescriptionsEnabled && <><h2 className="sec-title">Prescriptions</h2>
-        {rxs.length ? rxs.map(rx => <button key={rx.id} className="rx-card" onClick={() => w.writeRx({ item: rx })}>
-          <div className="rx-card-top"><strong>{dateLabel(rx.date, { day: 'numeric', month: 'short', year: 'numeric' })}</strong>{rx.sentAt ? <Status status="accepted">Sent</Status> : <Status status="scheduled">Saved</Status>}</div>
-          {rx.diagnosis && <p className="rx-dx">{rx.diagnosis}</p>}
-          <small>{rx.medicines.map(m => m.name).join(', ') || 'Advice only'}</small>
-        </button>) : <p className="muted">No prescriptions yet.</p>}</>}
         {reminders.length > 0 && <><h2 className="sec-title">Older manual reminders</h2>{reminders.map(r => <div className="legacy" key={r.id}><small>{dateLabel(r.date)} · {clockLabel(r.time)} · {reminderStatus(r, w.clinic)}</small><p>{r.sentMessage || reminderMessage(w.clinic, r)}</p></div>)}</>}
       </section>
     </div>
+    <Modal open={editing} onClose={() => setEditing(false)} title="Medical record" subtitle={p.name} wide>
+      {editing && record.status === 'ready' && <PatientRecordForm w={w} patientId={id} live={record.value} onDone={() => setEditing(false)} />}
+    </Modal>
   </div>;
 }

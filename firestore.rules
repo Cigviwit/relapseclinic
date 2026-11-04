@@ -7,6 +7,9 @@ service cloud.firestore {
     // appointments/{id}: id, clinicId, patientId, doctorId, date, time, reason, status (strings), duration (int).
     // prescriptions/{id}: id, clinicId, patientId, doctorId, date, medicines (list), createdAt; optional vitals, notes, follow-up, sentAt.
     // reminders/{id}: id, clinicId, patientId, date, time, message, status (strings), optional sentAt/sentMessage.
+    // patientRecords/{patientId}: one per patient; demographics and medical background. version must rise by exactly 1, so a stale edit is refused.
+    // patientNotes/{id}: id, clinicId, patientId, doctorId, date, text, createdAt, createdBy; optional vitals, corrects. Never changed once written.
+    // patientRecordAudit/{id}: written by the recordPatientRecordChange function only.
     function signedIn() { return request.auth != null; }
     function isAdmin() { return signedIn() && request.auth.uid == 'zfXlb9MEMQSQDBNYOk5RJFDJcZo1'; }
     function profilePath() { return /databases/$(database)/documents/users/$(request.auth.uid); }
@@ -72,6 +75,41 @@ service cloud.firestore {
         && (!('advice' in data) || (data.advice is string && data.advice.size() <= 3000))
         && (!('tests' in data) || (data.tests is string && data.tests.size() <= 1000));
     }
+    function upTo(data, field, max) { return !(field in data) || (data[field] is string && data[field].size() <= max); }
+    function patientInClinic(patientId, clinicId) {
+      return get(/databases/$(database)/documents/patients/$(patientId)).data.clinicId == clinicId;
+    }
+    function validPatientRecord(data, id) {
+      return data.keys().hasAll(['id','clinicId','patientId','allergyStatus','allergies','version','updatedAt','updatedBy'])
+        && data.keys().hasOnly(['id','clinicId','patientId','fileNo','dob','dobEstimated','sex','bloodGroup','occupation','address','emergencyName','emergencyPhone','allergyStatus','allergies','conditions','medications','surgeries','familyHistory','tobacco','alcohol','notes','version','updatedAt','updatedBy'])
+        && data.id == id && data.patientId == id && text(data.clinicId, 100)
+        && data.allergyStatus in ['unknown','none','known']
+        && data.allergies is list && data.allergies.size() <= 40
+        && (data.allergyStatus == 'known') == (data.allergies.size() > 0)
+        && data.version is int
+        && data.updatedAt == request.time && data.updatedBy == request.auth.uid
+        && (!('dob' in data) || data.dob == '' || data.dob.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$'))
+        && (!('dobEstimated' in data) || data.dobEstimated is bool)
+        && (!('sex' in data) || data.sex in ['','M','F','O'])
+        && (!('bloodGroup' in data) || data.bloodGroup in ['','A+','A-','B+','B-','AB+','AB-','O+','O-'])
+        && (!('tobacco' in data) || data.tobacco in ['','never','former','current'])
+        && (!('alcohol' in data) || data.alcohol in ['','never','former','current'])
+        && upTo(data, 'fileNo', 40) && upTo(data, 'occupation', 100) && upTo(data, 'address', 300)
+        && upTo(data, 'emergencyName', 100) && upTo(data, 'emergencyPhone', 20)
+        && upTo(data, 'conditions', 2000) && upTo(data, 'medications', 2000) && upTo(data, 'surgeries', 2000)
+        && upTo(data, 'familyHistory', 2000) && upTo(data, 'notes', 3000);
+    }
+    function validPatientNote(data, id) {
+      return data.keys().hasAll(['id','clinicId','patientId','doctorId','date','text','createdAt','createdBy'])
+        && data.keys().hasOnly(['id','clinicId','patientId','doctorId','date','text','vitals','corrects','createdAt','createdBy'])
+        && data.id == id && text(data.clinicId, 100) && text(data.patientId, 100) && text(data.doctorId, 100)
+        && data.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && data.text is string && data.text.size() <= 5000
+        && (!('vitals' in data) || (data.vitals is map && data.vitals.size() <= 5))
+        && optionalText(data, 'corrects', 100)
+        && data.createdAt == request.time && data.createdBy == request.auth.uid
+        && patientInClinic(data.patientId, data.clinicId);
+    }
     function prescriptionsOn(clinicId) {
       return get(/databases/$(database)/documents/clinics/$(clinicId)).data.get('prescriptionsEnabled', false) == true;
     }
@@ -82,10 +120,6 @@ service cloud.firestore {
       return request.resource.data.get('billingEnabled', false) == resource.data.get('billingEnabled', false);
     }
     function sameClinic() { return request.resource.data.clinicId == resource.data.clinicId; }
-    function upTo(data, field, max) { return !(field in data) || (data[field] is string && data[field].size() <= max); }
-    function patientInClinic(patientId, clinicId) {
-      return get(/databases/$(database)/documents/patients/$(patientId)).data.clinicId == clinicId;
-    }
     // Billing: amounts are whole paise. Bills, ledger entries and closings are never deleted and a closed day takes no new entries.
     function billingMember(clinicId) {
       return clinicMember(clinicId) && get(/databases/$(database)/documents/clinics/$(clinicId)).data.get('billingEnabled', false) == true;
@@ -167,6 +201,24 @@ service cloud.firestore {
       allow create: if canAccess(request.resource.data.clinicId) && prescriptionsOn(request.resource.data.clinicId) && validPrescription(request.resource.data, id);
       allow update: if canAccess(resource.data.clinicId) && prescriptionsOn(resource.data.clinicId) && sameClinic() && validPrescription(request.resource.data, id);
       allow delete: if false;
+    }
+    // Clinical data belongs to the clinic: these three use clinicMember, so the platform admin cannot read or write them.
+    match /patientRecords/{id} {
+      allow get, list: if clinicMember(resource.data.clinicId);
+      allow create: if clinicMember(request.resource.data.clinicId) && validPatientRecord(request.resource.data, id)
+        && request.resource.data.version == 1 && patientInClinic(id, request.resource.data.clinicId);
+      allow update: if clinicMember(resource.data.clinicId) && sameClinic() && validPatientRecord(request.resource.data, id)
+        && request.resource.data.version == resource.data.version + 1;
+      allow delete: if false;
+    }
+    match /patientNotes/{id} {
+      allow get, list: if clinicMember(resource.data.clinicId);
+      allow create: if clinicMember(request.resource.data.clinicId) && validPatientNote(request.resource.data, id);
+      allow update, delete: if false;
+    }
+    match /patientRecordAudit/{id} {
+      allow get, list: if clinicMember(resource.data.clinicId);
+      allow create, update, delete: if false;
     }
     // Billing belongs to the clinic as well: bill items reveal treatment, so the platform admin cannot read them.
     match /bills/{id} {

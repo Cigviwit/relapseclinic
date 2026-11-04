@@ -1,7 +1,8 @@
 import { seed, addDays, type Database } from './clinic';
 import type { Account } from './auth-service';
-import type { Repository, MessageDelivery, DoctorDigestDelivery } from './firestore-repository';
+import { staleRecordMessage, type Repository, type MessageDelivery, type DoctorDigestDelivery } from './firestore-repository';
 import type { Prescription } from './prescription';
+import { blankPatientRecord, recordChanges, type PatientNote, type PatientRecord, type RecordAudit } from './patient-record';
 import { closingId, type Bill, type DayClosing, type LedgerEntry } from './billing';
 
 /**
@@ -47,6 +48,16 @@ function demoData() {
     ], advice: 'Avoid chewing on the treated side\nComplete the full course of antibiotics', tests: 'IOPA 36', followUp: addDays(date, 7), createdAt: new Date().toISOString(), sentAt: new Date().toISOString(),
   }];
   const stamp = new Date().toISOString();
+  const records: PatientRecord[] = [
+    { ...blankPatientRecord('greenleaf', 'p0'), fileNo: 'GL-1024', dob: addDays(date, -34 * 365 - 40), sex: 'M', bloodGroup: 'B+', occupation: 'Teacher', address: '12th Main, Indiranagar, Bengaluru', emergencyName: 'Sunita Sharma (wife)', emergencyPhone: '+918000000150', allergyStatus: 'known', allergies: [{ id: 'al1', substance: 'Penicillin', reaction: 'Rash and swelling', severity: 'severe' }], conditions: 'Type 2 diabetes\nHypertension', medications: 'Metformin 500 mg twice daily\nTelmisartan 40 mg once daily', surgeries: 'Appendectomy, 2016', familyHistory: 'Father: diabetes', tobacco: 'former', alcohol: 'never', version: 2, updatedAt: stamp, updatedBy: 'demo' },
+    { ...blankPatientRecord('greenleaf', 'p1'), dob: addDays(date, -58 * 365), dobEstimated: true, sex: 'F', allergyStatus: 'none', version: 1, updatedAt: stamp, updatedBy: 'demo' },
+  ];
+  const notes: PatientNote[] = [
+    { id: 'n1', clinicId: 'greenleaf', patientId: 'p0', doctorId: 'priya', date: addDays(date, -21), text: 'Sensitivity on lower left molar, worse with cold. Advised review if it persists.', vitals: { bp: '130/84', pulse: '78', temp: '', weight: '74', spo2: '' }, createdAt: stamp, createdBy: 'demo' },
+  ];
+  const audit: RecordAudit[] = [
+    { id: 'p0_2', clinicId: 'greenleaf', patientId: 'p0', version: 2, changes: [{ field: 'allergyStatus', from: 'unknown', to: 'known' }, { field: 'allergies', from: [], to: records[0].allergies }], changedAt: stamp, changedBy: 'demo' },
+  ];
   Object.assign(dental, { billingEnabled: true, billing: { upiId: 'greenleafdental@okhdfc', upiName: 'Greenleaf Dental Care', fees: [
     { id: 'f1', name: 'Consultation', price: 50000 }, { id: 'f2', name: 'Scaling & polishing', price: 150000 }, { id: 'f3', name: 'Filling', price: 120000 },
     { id: 'f4', name: 'Extraction', price: 100000 }, { id: 'f5', name: 'Root canal – per sitting', price: 350000 }, { id: 'f6', name: 'IOPA X-ray', price: 20000 },
@@ -59,7 +70,7 @@ function demoData() {
     demoBill('b3', '2026-27/00003', 'p5', addDays(date, -6), undefined, 'Extraction', 100000),
   ];
   const ledger: LedgerEntry[] = [demoPay('e1', 'p0', date, 'b1', 'upi', 50000), demoPay('e2', 'p1', date, 'b2', 'cash', 200000), demoPay('e3', 'p2', addDays(date, -2), undefined, 'upi', 500000)];
-  return { db, deliveries, prescriptions, digests: [] as DoctorDigestDelivery[], bills, ledger, closings: [] as DayClosing[] };
+  return { db, deliveries, prescriptions, records, notes, audit, digests: [] as DoctorDigestDelivery[], bills, ledger, closings: [] as DayClosing[] };
 }
 
 export function createDemoRepository(): Repository {
@@ -76,6 +87,19 @@ export function createDemoRepository(): Repository {
     subscribeDeliveries: (_a, onUpdate) => watch(() => onUpdate(state.deliveries)),
     subscribeDoctorDigests: (_a, onUpdate) => watch(() => onUpdate(state.digests)),
     subscribePrescriptions: (_a, onUpdate) => watch(() => onUpdate(state.prescriptions)),
+    subscribePatientRecord: (_c, patientId, onUpdate) => watch(() => onUpdate(state.records.find(r => r.patientId === patientId) || null)),
+    subscribePatientNotes: (_c, patientId, onUpdate) => watch(() => onUpdate(state.notes.filter(n => n.patientId === patientId))),
+    subscribeRecordAudit: (_c, patientId, onUpdate) => watch(() => onUpdate(state.audit.filter(a => a.patientId === patientId))),
+    savePatientRecord: async (account, r) => {
+      const current = state.records.find(x => x.id === r.id);
+      if ((current?.version || 0) !== r.version) throw new Error(staleRecordMessage);
+      const saved = { ...r, version: r.version + 1, updatedAt: new Date().toISOString(), updatedBy: account.user.uid };
+      const changes = recordChanges(current, saved);
+      state.records = upsert(state.records, saved);
+      if (changes.length) state.audit = [...state.audit, { id: `${r.id}_${saved.version}`, clinicId: r.clinicId, patientId: r.patientId, version: saved.version, changes, changedAt: saved.updatedAt, changedBy: saved.updatedBy }];
+      return later();
+    },
+    addPatientNote: async (account, n) => { state.notes = [...state.notes, { ...n, createdAt: new Date().toISOString(), createdBy: account.user.uid }]; return later(); },
     saveClinic: async c => { state.db.clinics = state.db.clinics.map(x => x.id === c.id ? c : x); return later(); },
     setPrescriptionsEnabled: async (id, prescriptionsEnabled) => { state.db.clinics = state.db.clinics.map(x => x.id === id ? { ...x, prescriptionsEnabled } : x); return later(); },
     savePatient: async p => { state.db.patients = upsert(state.db.patients, p); return later(); },

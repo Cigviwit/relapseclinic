@@ -43,6 +43,21 @@ The **Dental** pad adds medical history and allergies, an FDI tooth chart (adult
 
 Prescriptions are stored in the `prescriptions` Firestore collection; sent PDFs in `prescriptionFiles` (server only).
 
+## Patient records
+
+A patient's page shows allergies first, then personal details, medical background and one history combining visits, prescriptions and notes. Records work whether or not digital prescriptions are on. New prescriptions start with the patient's age, sex and history, and show their allergies; this is a reminder, and the app does not check medicines against allergies.
+
+- `patients`: name, phone, consent and language only. Every open screen syncs this whole collection, and the messaging functions read it, so medical details stay out of it.
+- `patientRecords/{patientId}`: what is true of the patient now, loaded only while that patient is open. `version` must rise by exactly 1 on each save, so `firestore.rules` refuses an edit based on an out-of-date copy.
+- `patientNotes`: visit notes and vitals. They cannot be edited or deleted; a correction is a new note whose `corrects` names the old one. `createdAt` and `createdBy` are enforced by the rules.
+- `patientRecordAudit`: what changed in each record save, written only by the `recordPatientRecordChange` function.
+
+These three collections are private to the clinic: the rules use `clinicMember`, so the administrator account cannot read or write them, and the app shows a notice instead. Prescriptions are separate and remain visible to the administrator, including any history copied onto them.
+
+Allergy status is `unknown`, `none` or `known`, because an empty list does not tell a doctor that someone asked. A clinic shares one login, so `createdBy` and `updatedBy` identify the clinic account and a note's `doctorId` is chosen by whoever wrote it.
+
+Deploy the rules before the website, or patient pages will show “could not be loaded” for medical details: `npx firebase-tools deploy --only firestore:rules,functions:recordPatientRecordChange --project relapse-clinic-db`.
+
 ## Billing
 
 Billing is off for every clinic by default. Only the administrator can turn it on, per clinic, in **Settings → Billing** (`billingEnabled`, enforced by `firestore.rules`). The administrator cannot read a clinic's bills.

@@ -7,6 +7,9 @@ import { blankMedicine, cleanPrescription, dayPresets, followUpPresets, frequenc
 import { padFor, specialties, type Specialty } from '@/lib/rx-templates';
 import { elementToPdf, toBase64 } from '@/lib/pdf';
 import { patientLanguage } from '@/lib/patient-language';
+import { applyRxPrefill, emptyPrefill, rxPrefill } from '@/lib/patient-record';
+import { usePatientRecord } from '@/hooks/use-patient-record';
+import { AllergyBanner } from '../workspace/patient-record';
 import { Field, Kbd, Select } from '../kit';
 import { PatientPicker } from '../patient-picker';
 import { Pad } from './pad';
@@ -47,6 +50,15 @@ export default function PrescriptionBuilder({ w, initial, onClose }: { w: Worksp
   }, [w.prescriptions, preset]);
   const lastForPatient = useMemo(() => w.prescriptions.filter(p => p.patientId === rx.patientId && p.id !== rx.id).sort((a, b) => (b.date + b.createdAt).localeCompare(a.date + a.createdAt))[0], [w.prescriptions, rx.patientId, rx.id]);
   const lang = patientLanguage(patient?.language);
+  const record = usePatientRecord(w.repo, w.clinic.id, w.clinicalAccess ? rx.patientId : '');
+  // New drafts start from the patient's record. Doesn't mark the draft dirty: nothing has been typed yet.
+  const prefilled = useRef(emptyPrefill);
+  useEffect(() => {
+    if (isSaved || record.status !== 'ready') return;
+    const next = rxPrefill(record.value, rx.date);
+    const previous = prefilled.current; prefilled.current = next;
+    setRx(x => applyRxPrefill(x, previous, next));
+  }, [record, isSaved, rx.date]);
 
   /** Chips add or remove one entry in a text field; separator is ", " for short lists, newline for steps. */
   const entries = (field: TextField, sep: string) => rx[field].split(sep === '\n' ? '\n' : /,\s*/).map(s => s.trim()).filter(Boolean);
@@ -150,6 +162,7 @@ export default function PrescriptionBuilder({ w, initial, onClose }: { w: Worksp
           </div>
           {lastForPatient && !isSaved && rx.medicines.every(m => !m.name) && <div className="note note-info row-between"><span>Last visit {dateLabel(lastForPatient.date, { day: 'numeric', month: 'short' })}: {lastForPatient.diagnosis || lastForPatient.medicines.map(m => m.name).join(', ')}{lastForPatient.teeth?.length ? ` · teeth ${lastForPatient.teeth.join(', ')}` : ''}</span>
             <button className="btn btn-sm btn-soft" onClick={() => set({ history: lastForPatient.history, diagnosis: lastForPatient.diagnosis, plan: lastForPatient.plan, teeth: lastForPatient.teeth || [], medicines: lastForPatient.medicines.map(m => ({ ...m, id: crypto.randomUUID() })), advice: lastForPatient.advice })}>Copy forward</button></div>}
+          {rx.patientId && (w.clinicalAccess ? <AllergyBanner live={record} compact /> : <p className="note note-warn">Allergies are private to the clinic and hidden from administrator accounts. Check with the clinic before prescribing.</p>)}
           <div className="grid-vitals">
             <Field label="Age"><input className="input" inputMode="numeric" maxLength={3} value={rx.age} onChange={e => set({ age: e.target.value.replace(/\D/g, '') })} placeholder="yrs" /></Field>
             <Field label="Sex"><Select label="Sex" value={rx.sex} onChange={v => set({ sex: v as Prescription['sex'] })} options={[{ value: '', label: '—' }, { value: 'M', label: 'Male' }, { value: 'F', label: 'Female' }, { value: 'O', label: 'Other' }]} /></Field>

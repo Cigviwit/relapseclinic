@@ -7,7 +7,7 @@ const { randomBytes, timingSafeEqual } = require('node:crypto');
 const { defineSecret } = require('firebase-functions/params');
 const { logger } = require('firebase-functions');
 const { financialYear, billNumber } = require('./bill-number');
-const { addDays, localNow, slotFor, missedDueNow, deliveryId, appointmentMessage, msg91Payload, prescriptionValues, prescriptionFileName, prescriptionDeliveryId, hasReplacementAppointment, digestDue, doctorDigest, doctorDigestId, manualDoctorDigestId } = require('./reminder-logic');
+const { recordChanges, addDays, localNow, slotFor, missedDueNow, deliveryId, appointmentMessage, msg91Payload, prescriptionValues, prescriptionFileName, prescriptionDeliveryId, hasReplacementAppointment, digestDue, doctorDigest, doctorDigestId, manualDoctorDigestId } = require('./reminder-logic');
 
 initializeApp();
 const db = getFirestore();
@@ -264,6 +264,18 @@ exports.sendMissedVisit = onDocumentWritten({
   const before = event.data?.before?.data();
   if (!after || after.status !== 'missed' || before?.status === 'missed') return;
   await sendAppointment(event.params.appointmentId, 'missed_day_one', appointmentFingerprint(after), true);
+});
+
+// Triggers can fire more than once, so the id comes from the version and a retry overwrites itself.
+exports.recordPatientRecordChange = onDocumentWritten({
+  document: 'patientRecords/{patientId}', region,
+}, async (event) => {
+  const after = event.data?.after?.data();
+  if (!after) return;
+  const changes = recordChanges(event.data?.before?.data(), after);
+  if (!changes.length) return;
+  const id = `${event.params.patientId}_${after.version}`;
+  await db.doc(`patientRecordAudit/${id}`).set({ id, clinicId: after.clinicId, patientId: event.params.patientId, version: after.version, changes, changedAt: after.updatedAt, changedBy: after.updatedBy });
 });
 
 exports.sendScheduledReminders = onSchedule({

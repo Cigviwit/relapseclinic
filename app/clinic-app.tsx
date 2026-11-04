@@ -189,7 +189,7 @@ export default function ClinicApp() {
   function savePatient(p: Patient) { repo.savePatient(p).then(() => toast.success('Patient saved')).catch(e => toast.error(e.message)); }
 
   const w: Workspace = {
-    account, db, clinic, repo, now, doctorFilter, setDoctorFilter,
+    account, db, clinic, repo, now, doctorFilter, setDoctorFilter, clinicalAccess: demo || account.role !== 'admin',
     patients: scoped.patients, appointments: scoped.appointments, deliveries: scoped.deliveries, digests: scoped.digests, prescriptions: scoped.prescriptions,
     patient: id => scoped.byId.get(id), doctor: id => scoped.doctors.get(id), doctorName: id => scoped.doctors.get(id)?.name || 'Doctor',
     go, book: o => { setDetail(null); setBooking(o || {}); }, openAppointment: setDetail,
