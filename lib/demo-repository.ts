@@ -3,6 +3,7 @@ import type { Account } from './auth-service';
 import { staleRecordMessage, type AuditEntry, type Repository, type MessageDelivery, type DoctorDigestDelivery, type StaffMember } from './firestore-repository';
 import { roleOptions, type Role } from './permissions';
 import type { WaitlistEntry } from './front-desk';
+import type { PatientFile } from './patient-file';
 import type { Prescription } from './prescription';
 import { blankPatientRecord, recordChanges, type PatientNote, type PatientRecord, type RecordAudit } from './patient-record';
 import { closingId, daySummary, makeClosing, type Bill, type DayClosing, type LedgerEntry } from './billing';
@@ -84,7 +85,7 @@ function demoData() {
     { id: 'l2', clinicId: 'greenleaf', collection: 'bills', docId: 'b1', action: 'create', fields: [], patientId: 'p0', actorUid: 'demo-frontdesk', actorName: 'Asha Kulkarni', at: stamp },
     { id: 'l3', clinicId: 'greenleaf', collection: 'prescriptions', docId: 'rx1', action: 'create', fields: [], patientId: 'p0', actorUid: 'demo-owner', actorName: 'Dr. Priya Nair', at: stamp },
   ];
-  return { db, deliveries, prescriptions, records, notes, audit, digests: [] as DoctorDigestDelivery[], bills, ledger, closings: [] as DayClosing[], staff, activity, waitlist: [{ id: 'wl1', clinicId: 'greenleaf', patientId: 'p4', doctorId: '', note: 'Weekday evenings', status: 'waiting', createdAt: stamp }] as WaitlistEntry[] };
+  return { db, deliveries, prescriptions, records, notes, audit, digests: [] as DoctorDigestDelivery[], bills, ledger, closings: [] as DayClosing[], staff, activity, waitlist: [{ id: 'wl1', clinicId: 'greenleaf', patientId: 'p4', doctorId: '', note: 'Weekday evenings', status: 'waiting', createdAt: stamp }] as WaitlistEntry[], files: [] as (PatientFile & { data: string })[] };
 }
 
 export function createDemoRepository(): Repository {
@@ -197,6 +198,15 @@ export function createDemoRepository(): Repository {
       await later();
       return { status: 'accepted' as const };
     },
+    subscribePatientFiles: (_c, patientId, onUpdate) => watch(() => onUpdate(state.files.filter(f => f.patientId === patientId).map(({ data: _data, ...f }) => f))), // eslint-disable-line @typescript-eslint/no-unused-vars
+    uploadPatientFile: async ({ data, ...input }) => {
+      const id = crypto.randomUUID();
+      state.files = [...state.files, { ...input, id, contentType: 'image/png', size: Math.round(data.length * 0.75), createdBy: demoAccount().name, createdAt: new Date().toISOString(), data }];
+      log({ collection: 'patientFiles', docId: id, action: 'create', fields: [], patientId: input.patientId });
+      return later();
+    },
+    getPatientFile: async id => { const f = state.files.find(x => x.id === id)!; return { name: f.name, contentType: f.contentType, data: f.data }; },
+    removePatientFile: async id => { state.files = state.files.map(f => f.id === id ? { ...f, removedAt: new Date().toISOString() } : f); return later(); },
     subscribeWaitlist: (clinicId, onUpdate) => watch(() => onUpdate(inClinic(state.waitlist, clinicId).filter(e => e.status === 'waiting'))),
     addToWaitlist: async entry => { state.waitlist = [...state.waitlist, entry]; log({ collection: 'waitlist', docId: entry.id, action: 'create', fields: [], patientId: entry.patientId }); return later(); },
     setWaitlistStatus: async (id, status) => { state.waitlist = state.waitlist.map(e => e.id === id ? { ...e, status } : e); return later(); },

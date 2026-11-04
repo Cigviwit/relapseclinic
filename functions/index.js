@@ -16,6 +16,7 @@ const { AUDITED, auditEntry } = require('./audit-logic');
 const { createStaff, updateStaff, staffSetupLink, createClinic } = require('./staff-logic');
 const { pdfPath, isFresh, purgeExpiredFiles } = require('./file-retention');
 const { mergePatients } = require('./merge-logic');
+const { uploadPatientFile, getPatientFile, removePatientFile } = require('./file-logic');
 const { recordChanges, addDays, localNow, slotFor, missedDueNow, deliveryId, appointmentMessage, msg91Payload, prescriptionValues, prescriptionFileName, prescriptionDeliveryId, hasReplacementAppointment, digestDue, doctorDigest, doctorDigestId, manualDoctorDigestId } = require('./reminder-logic');
 
 initializeApp();
@@ -463,6 +464,9 @@ exports.bookAppointment = onCall(callOptions, callable((request) => bookAppointm
 exports.bookWalkIn = onCall(callOptions, callable((request) => bookWalkIn(db, request.auth, request.data?.appointment)));
 exports.closeDay = onCall(callOptions, callable((request) => closeDay(db, request.auth, request.data)));
 exports.mergePatients = onCall({ ...callOptions, timeoutSeconds: 300 }, callable((request) => mergePatients(db, request.auth, request.data)));
+exports.uploadPatientFile = onCall({ ...callOptions, memory: '512MiB', timeoutSeconds: 120 }, callable((request) => uploadPatientFile(db, getStorage().bucket(), request.auth, request.data)));
+exports.getPatientFile = onCall({ ...callOptions, memory: '512MiB', timeoutSeconds: 120 }, callable((request) => getPatientFile(db, getStorage().bucket(), request.auth, request.data)));
+exports.removePatientFile = onCall(callOptions, callable((request) => removePatientFile(db, request.auth, request.data)));
 exports.createStaff = onCall(callOptions, callable((request) => createStaff(db, getAuth(), request.auth, request.data)));
 exports.updateStaff = onCall(callOptions, callable((request) => updateStaff(db, getAuth(), request.auth, request.data)));
 exports.staffSetupLink = onCall(callOptions, callable((request) => staffSetupLink(db, getAuth(), request.auth, request.data)));

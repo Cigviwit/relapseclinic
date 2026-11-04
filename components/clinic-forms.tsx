@@ -33,7 +33,7 @@ export function AppointmentForm({ db, clinic, date, appointment, patientId, doct
   const [saving, setSaving] = useState(false);
   const [manualTime, setManualTime] = useState(false);
   const change = (v: Partial<Appointment>) => { setA(x => ({ ...x, ...v })); setError(''); };
-  const patients = useMemo(() => db.patients.filter(p => p.clinicId === clinic.id), [db.patients, clinic.id]);
+  const patients = useMemo(() => db.patients.filter(p => p.clinicId === clinic.id && !p.mergedInto), [db.patients, clinic.id]);
   const slots = useMemo(() => freeSlots(db.appointments, clinic, a.doctorId, a.date, a.duration, a.id), [db.appointments, clinic, a.doctorId, a.date, a.duration, a.id]);
   const today = zonedNow(clinic.timezone).date;
   const chosen = patients.find(p => p.id === a.patientId);

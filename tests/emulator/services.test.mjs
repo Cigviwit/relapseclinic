@@ -13,6 +13,7 @@ const { closeDay } = require('./closing-logic');
 const { createStaff, updateStaff, staffSetupLink, createClinic } = require('./staff-logic');
 const { purgeExpiredFiles, pdfPath } = require('./file-retention');
 const { mergePatients } = require('./merge-logic');
+const { uploadPatientFile, getPatientFile, removePatientFile, MAX_FILE_BYTES } = require('./file-logic');
 
 let db, auth, bucket;
 const C = 'clinic1';
@@ -31,7 +32,7 @@ before(() => {
   db = getFirestore(); auth = getAuth(); bucket = getStorage().bucket();
 });
 beforeEach(async () => {
-  for (const name of ['users', 'clinics', 'patients', 'appointments', 'bills', 'ledgerEntries', 'dayClosings', 'prescriptionFiles', 'prescriptions', 'patientRecords', 'patientNotes', 'auditLog', 'waitlist']) await wipe(name);
+  for (const name of ['users', 'clinics', 'patients', 'appointments', 'bills', 'ledgerEntries', 'dayClosings', 'prescriptionFiles', 'prescriptions', 'patientRecords', 'patientNotes', 'auditLog', 'waitlist', 'patientFiles']) await wipe(name);
   const { users } = await auth.listUsers();
   await Promise.all(users.map((u) => auth.deleteUser(u.uid)));
   await db.doc(`clinics/${C}`).set({ id: C, name: 'Clinic', opens: '09:00', closes: '19:00', timezone: 'Asia/Kolkata', billingEnabled: true, doctors: [{ id: 'd1' }, { id: 'd2' }] });
@@ -253,6 +254,45 @@ test('only an owner of this clinic can merge, once, and only two real patients o
   await refused(merge(owner, { mergeId: 'missing' }), 'failed-precondition');
   await merge(owner);
   await refused(merge(owner), 'failed-precondition', /already been merged/);
+});
+
+// --- Patient files ---
+const pngBytes = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from('image')]);
+const upload = (who, over = {}) => uploadPatientFile(db, bucket, who, { clinicId: C, patientId: 'p1', name: 'IOPA 36.png', kind: 'xray', data: pngBytes.toString('base64'), ...over });
+
+test('a file uploads, opens with its contents intact, and records who added it', async () => {
+  const { id } = await upload(frontdesk);
+  const record = (await db.doc(`patientFiles/${id}`).get()).data();
+  assert.deepEqual([record.name, record.contentType, record.createdBy, record.size], ['IOPA 36.png', 'image/png', 'FRONTDESK', pngBytes.length]);
+  const opened = await getPatientFile(db, bucket, doctor, { id });
+  assert.equal(Buffer.from(opened.data, 'base64').equals(pngBytes), true);
+  assert.equal((await getPatientFile(db, bucket, platform, { id })).contentType, 'image/png');
+  await bucket.file(record.path).delete();
+});
+
+test('uploads are refused by role, clinic, type and size', async () => {
+  await refused(upload(undefined), 'unauthenticated');
+  await refused(upload(billing), 'permission-denied');
+  await refused(upload(platform), 'permission-denied');
+  await refused(upload(outsider), 'permission-denied');
+  await refused(upload(frontdesk, { patientId: 'missing' }), 'failed-precondition');
+  await refused(upload(frontdesk, { data: Buffer.from('<html>').toString('base64') }), 'invalid-argument', /Only PDF/);
+  await refused(upload(frontdesk, { kind: 'virus' }), 'invalid-argument');
+  await refused(upload(frontdesk, { data: Buffer.alloc(MAX_FILE_BYTES + 1, 1).toString('base64') }), 'invalid-argument', /larger than 7 MB/);
+});
+
+test('another clinic and billing staff cannot open a file; a removed file stays on record but cannot be opened', async () => {
+  const { id } = await upload(frontdesk);
+  await refused(getPatientFile(db, bucket, outsider, { id }), 'permission-denied');
+  await refused(getPatientFile(db, bucket, billing, { id }), 'permission-denied');
+  await refused(removePatientFile(db, frontdesk, { id, reason: 'x' }), 'permission-denied');
+  await refused(removePatientFile(db, doctor, { id }), 'invalid-argument');
+  await removePatientFile(db, doctor, { id, reason: 'Wrong patient' });
+  const record = (await db.doc(`patientFiles/${id}`).get()).data();
+  assert.deepEqual([record.removedBy, record.removedReason], ['DOCTOR', 'Wrong patient']);
+  await refused(getPatientFile(db, bucket, doctor, { id }), 'failed-precondition', /removed/);
+  assert.equal((await bucket.file(record.path).exists())[0], true);
+  await bucket.file(record.path).delete();
 });
 
 // --- PDF retention ---

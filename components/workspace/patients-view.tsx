@@ -11,6 +11,7 @@ import { Avatar, Empty, Modal, Status } from '../kit';
 import { AllergyBanner, MedicalSummary, NoteCard, NoteComposer, PatientRecordForm, RecordFacts } from './patient-record';
 import { PatientBilling } from '../billing/patient-billing';
 import { AddToWaitlist, FamilySection } from './front-desk-cards';
+import { PatientFiles } from './patient-files';
 import type { Workspace } from './types';
 
 export default function PatientsView({ w, selectedId, select }: { w: Workspace; selectedId: string | null; select: (id: string | null) => void }) {
@@ -98,6 +99,7 @@ function PatientDetail({ w, id, onBack }: { w: Workspace; id: string; onBack: ()
       </section>
       <section>
         {w.can.readRecords && <MedicalSummary w={w} live={record} onEdit={() => setEditing(true)} />}
+        {w.can.readRecords && <PatientFiles key={id} w={w} patientId={id} />}
         <FamilySection w={w} patient={p} />
         {w.billingOn && <PatientBilling w={w} patientId={id} />}
         {reminders.length > 0 && <><h2 className="sec-title">Older manual reminders</h2>{reminders.map(r => <div className="legacy" key={r.id}><small>{dateLabel(r.date)} · {clockLabel(r.time)} · {reminderStatus(r, w.clinic)}</small><p>{r.sentMessage || reminderMessage(w.clinic, r)}</p></div>)}</>}

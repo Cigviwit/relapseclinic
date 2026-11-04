@@ -209,6 +209,17 @@ test('front desk maintains the medical record form; the platform admin only read
   await assertFails(setDoc(doc(as('billing'), 'patientRecords', 'p2'), record('billing')));
 });
 
+test('patient files are listed for clinical staff and the admin, and no browser writes the list', async () => {
+  await env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), 'patientFiles', 'f1'), { id: 'f1', clinicId: C, patientId: 'p1', name: 'x.png' }));
+  await assertSucceeds(getDoc(doc(as('frontdesk'), 'patientFiles', 'f1')));
+  await assertSucceeds(getDoc(doc(as('doctor'), 'patientFiles', 'f1')));
+  await assertSucceeds(getDoc(doc(admin(), 'patientFiles', 'f1')));
+  await assertFails(getDoc(doc(as('billing'), 'patientFiles', 'f1')));
+  await assertFails(getDoc(doc(as('outsider'), 'patientFiles', 'f1')));
+  await assertFails(setDoc(doc(as('owner'), 'patientFiles', 'f2'), { id: 'f2', clinicId: C, patientId: 'p1' }));
+  await assertFails(deleteDoc(doc(as('owner'), 'patientFiles', 'f1')));
+});
+
 test('the activity log is readable by owners and the platform admin, and written by nobody', async () => {
   await assertSucceeds(getDoc(doc(as('owner'), 'auditLog', 'l1')));
   await assertSucceeds(getDoc(doc(admin(), 'auditLog', 'l1')));

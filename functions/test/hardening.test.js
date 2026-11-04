@@ -6,6 +6,7 @@ const { auditEntry, changedFields, actorOf } = require('../audit-logic');
 const { changeError, cleanStaff } = require('../staff-logic');
 const { isFresh, PDF_LINK_DAYS } = require('../file-retention');
 const { mergeRecords } = require('../merge-logic');
+const { sniffType, cleanFileName } = require('../file-logic');
 
 const clinic = { id: 'c1', opens: '09:00', closes: '19:00', doctors: [{ id: 'd1' }, { id: 'd2' }] };
 const patient = { clinicId: 'c1' };
@@ -66,6 +67,24 @@ test('merging records combines history and prefers the kept record for single va
 test('moving records in a merge writes one log entry, not one per record', () => {
   assert.equal(auditEntry('bills', 'b', { clinicId: 'c', patientId: 'old' }, { clinicId: 'c', patientId: 'new', mergedFrom: 'old' }), null);
   assert.equal(auditEntry('bills', 'b', { clinicId: 'c', patientId: 'new', mergedFrom: 'old', note: '' }, { clinicId: 'c', patientId: 'new', mergedFrom: 'old', note: 'x' }).action, 'update', 'later changes are still logged');
+});
+
+test('uploads are recognised by their contents, not their names', () => {
+  const pad = (head, length = 140) => Buffer.concat([Buffer.from(head), Buffer.alloc(Math.max(0, length - head.length))]);
+  assert.equal(sniffType(pad('%PDF-1.7')), 'application/pdf');
+  assert.equal(sniffType(pad([0xff, 0xd8, 0xff, 0xe0])), 'image/jpeg');
+  assert.equal(sniffType(pad([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])), 'image/png');
+  assert.equal(sniffType(Buffer.concat([Buffer.from('RIFF'), Buffer.alloc(4), Buffer.from('WEBP')])), 'image/webp');
+  assert.equal(sniffType(Buffer.concat([Buffer.alloc(128), Buffer.from('DICM')])), 'application/dicom');
+  assert.equal(sniffType(pad('<script>alert(1)</script>')), null, 'a web page renamed .jpg');
+  assert.equal(sniffType(Buffer.alloc(0)), null);
+});
+
+test('file names cannot carry paths or control characters', () => {
+  assert.equal(cleanFileName('../../etc/passwd'), '.. .. etc passwd');
+  assert.equal(cleanFileName('a\u0000b.pdf'), 'a b.pdf');
+  assert.equal(cleanFileName(''), 'file');
+  assert.equal(cleanFileName('x'.repeat(300)).length, 120);
 });
 
 test('day totals count payments, refunds and reversals on the day recorded', () => {

@@ -8,6 +8,7 @@ import { blankPatientRecord, type PatientNote, type PatientRecord, type RecordAu
 import { mergeById } from "./data-window";
 import type { VisitStage } from "./queue";
 import type { WaitlistEntry } from "./front-desk";
+import type { PatientFile } from "./patient-file";
 import { plainValue } from "./csv";
 import type { StaffRole } from "./permissions";
 
@@ -71,6 +72,10 @@ export type Repository = {
   unlinkFamily(patient: Patient): Promise<void>;
   /** Owner only. Moves everything from one patient to the other on the server. It cannot be undone. */
   mergePatients(clinicId: string, keepId: string, mergeId: string): Promise<void>;
+  subscribePatientFiles(clinicId: string, patientId: string, onUpdate: (files: PatientFile[]) => void, onError: OnError): Unsubscribe;
+  uploadPatientFile(input: { clinicId: string; patientId: string; name: string; kind: string; note?: string; data: string }): Promise<void>;
+  getPatientFile(id: string): Promise<{ name: string; contentType: string; data: string }>;
+  removePatientFile(id: string, reason: string): Promise<void>;
   subscribeStaff(clinicId: string, onUpdate: (staff: StaffMember[]) => void, onError: OnError): Unsubscribe;
   createStaff(input: NewStaff): Promise<{ uid: string; setupLink: string }>;
   updateStaff(input: { uid: string; name?: string; role?: StaffRole; doctorId?: string; active?: boolean }): Promise<void>;
@@ -97,7 +102,8 @@ const uid = () => auth.currentUser?.uid ?? "";
 const toAppointment = (row: DocumentData) => ({ ...row, ...(row.arrivedAt ? { arrivedAt: iso(row.arrivedAt) } : {}), ...(row.startedAt ? { startedAt: iso(row.startedAt) } : {}), ...(row.finishedAt ? { finishedAt: iso(row.finishedAt) } : {}) }) as Appointment;
 const toPrescription = (row: DocumentData) => withDefaults({ ...row, finalizedAt: iso(row.finalizedAt) } as unknown as Prescription);
 
-const EXPORTED = ["patients", "appointments", "patientRecords", "patientNotes", "prescriptions", "bills", "ledgerEntries", "dayClosings", "messageDeliveries"];
+// File contents stay in Cloud Storage: the download lists them and they are fetched one at a time.
+const EXPORTED = ["patients", "appointments", "patientRecords", "patientNotes", "prescriptions", "bills", "ledgerEntries", "dayClosings", "messageDeliveries", "waitlist", "patientFiles"];
 const EXPORT_PAGE = 500;
 
 export const firestoreRepository: Repository = {
@@ -186,6 +192,10 @@ export const firestoreRepository: Repository = {
       throw error;
     }
   },
+  subscribePatientFiles: (clinicId, patientId, onUpdate, onError) => onSnapshot(forPatient("patientFiles", clinicId, patientId), snap => onUpdate(rows(snap).map(row => ({ ...row, createdAt: iso(row.createdAt), removedAt: iso(row.removedAt) }) as PatientFile)), onError),
+  uploadPatientFile: input => callFunction("uploadPatientFile", input, 120000),
+  getPatientFile: id => callFunction("getPatientFile", { id }, 120000),
+  removePatientFile: (id, reason) => callFunction("removePatientFile", { id, reason }),
   subscribeWaitlist: (clinicId, onUpdate, onError) => onSnapshot(query(collection(firestore, "waitlist"), where("clinicId", "==", clinicId), where("status", "==", "waiting")), snap => onUpdate(snap.docs.map(d => d.data() as WaitlistEntry)), onError),
   addToWaitlist: entry => setDoc(doc(firestore, "waitlist", entry.id), { ...defined(entry), updatedBy: uid(), updatedAt: serverTimestamp() }),
   setWaitlistStatus: (id, status) => updateDoc(doc(firestore, "waitlist", id), { status, updatedBy: uid(), updatedAt: serverTimestamp() }),

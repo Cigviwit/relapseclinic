@@ -267,6 +267,11 @@ service cloud.firestore {
       allow get, list: if canReadClinical(resource.data.clinicId);
       allow create, update, delete: if false;
     }
+    // Uploads, downloads and removals go through Cloud Functions, which check the caller's role. Browsers only read the list.
+    match /patientFiles/{id} {
+      allow get, list: if canReadClinical(resource.data.clinicId);
+      allow create, update, delete: if false;
+    }
     match /auditLog/{id} {
       allow get, list: if isAdmin() || hasRole(resource.data.clinicId, ['owner']);
       allow create, update, delete: if false;

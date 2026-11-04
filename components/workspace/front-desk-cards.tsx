@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import { CalendarPlus, GitMerge, ListPlus, Unlink, UserPlus, Users, X } from 'lucide-react';
+import { CalendarPlus, GitMerge, Unlink, UserPlus, Users, X } from 'lucide-react';
 import { dateLabel, type Patient } from '@/lib/clinic';
 import { duplicatePairs, familyMembers, sharedFamilyId } from '@/lib/front-desk';
 import { Field, FormError, Modal, Select } from '../kit';
@@ -93,4 +93,3 @@ export function DuplicatesCard({ w }: { w: Workspace }) {
   </>;
 }
 
-export const waitlistIcon = <ListPlus size={16} />;
