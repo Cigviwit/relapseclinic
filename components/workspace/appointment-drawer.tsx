@@ -1,5 +1,5 @@
 "use client";
-import { CalendarClock, Check, FileText, MessageCircle, Phone, UserRound, UserX, XCircle } from 'lucide-react';
+import { CalendarClock, Check, FileText, IndianRupee, MessageCircle, Phone, UserRound, UserX, XCircle } from 'lucide-react';
 import { clockLabel, dateLabel, minutes, type Appointment } from '@/lib/clinic';
 import { AppointmentTimeline } from '../appointment-timeline';
 import { Avatar, Status } from '../kit';
@@ -10,6 +10,7 @@ export default function AppointmentDrawer({ w, appointment, onClose }: { w: Work
   const p = w.patient(a.patientId);
   const ended = w.now.date > a.date || (w.now.date === a.date && minutes(w.now.time) >= minutes(a.time) + a.duration);
   const rx = w.prescriptions.find(r => r.appointmentId === a.id);
+  const bill = w.bills.find(b => b.appointmentId === a.id && b.status === 'active');
   return <div className="drawer">
     <div className="drawer-who"><Avatar name={p?.name || '?'} size="lg" /><div><h3>{p?.name || 'Patient removed'}</h3><p className="muted">{p?.phone}</p></div><Status status={a.status} /></div>
     <dl className="facts">
@@ -28,6 +29,7 @@ export default function AppointmentDrawer({ w, appointment, onClose }: { w: Work
         <button className="btn btn-outline" onClick={() => { void w.setStatus(a, 'completed'); }}>Correct to seen</button>
       </>}
       {w.clinic.prescriptionsEnabled && a.status !== 'cancelled' && a.status !== 'missed' && <button className="btn btn-soft" onClick={() => w.writeRx(rx ? { item: rx } : { patientId: a.patientId, doctorId: a.doctorId, appointmentId: a.id })}><FileText size={16} />{rx ? 'View prescription' : 'Write prescription'}</button>}
+      {w.billingOn && a.status !== 'cancelled' && a.status !== 'missed' && <button className="btn btn-soft" onClick={() => bill ? w.openBill(bill.id) : w.newBill({ patientId: a.patientId, doctorId: a.doctorId, appointmentId: a.id, reason: a.reason })}><IndianRupee size={16} />{bill ? 'View bill' : 'Make bill'}</button>}
       {p && <a className="btn btn-ghost" href={`https://wa.me/${p.phone.replace(/\D/g, '')}`} target="_blank" rel="noreferrer"><MessageCircle size={16} />WhatsApp</a>}
       {p && <a className="btn btn-ghost" href={`tel:${p.phone}`}><Phone size={16} />Call</a>}
       <button className="btn btn-ghost" onClick={() => { onClose(); w.go('patients', a.patientId); }}><UserRound size={16} />Patient history</button>

@@ -166,4 +166,12 @@ function manualDoctorDigestId(clinicId, doctorId, date, requestId) {
   return createHash('sha256').update(JSON.stringify(['manual', clinicId, doctorId, date, requestId])).digest('hex');
 }
 
-module.exports = { addDays, localNow, slotFor, missedDueNow, deliveryId, bodyValues, appointmentMessage, msg91Payload, prescriptionValues, prescriptionFileName, prescriptionDeliveryId, hasReplacementAppointment, digestDue, doctorDigest, doctorDigestId, manualDoctorDigestId };
+const recordMetaFields = new Set(['id', 'clinicId', 'patientId', 'version', 'updatedAt', 'updatedBy']);
+const comparableRecordValue = (v) => JSON.stringify(v === undefined || v === null || v === false || (Array.isArray(v) && !v.length) ? '' : v);
+function recordChanges(before = {}, after) {
+  return Object.keys(after)
+    .filter((field) => !recordMetaFields.has(field) && comparableRecordValue(before[field]) !== comparableRecordValue(after[field]))
+    .map((field) => ({ field, from: before[field] ?? null, to: after[field] ?? null }));
+}
+
+module.exports = { recordChanges, addDays, localNow, slotFor, missedDueNow, deliveryId, bodyValues, appointmentMessage, msg91Payload, prescriptionValues, prescriptionFileName, prescriptionDeliveryId, hasReplacementAppointment, digestDue, doctorDigest, doctorDigestId, manualDoctorDigestId };

@@ -1,6 +1,6 @@
 "use client";
 import { Fragment, useMemo } from 'react';
-import { AlertTriangle, CalendarPlus, Check, ChevronRight, Clock, FileText, Phone, UserX } from 'lucide-react';
+import { AlertTriangle, CalendarPlus, Check, ChevronRight, Clock, FileText, IndianRupee, Phone, UserX } from 'lucide-react';
 import { addDays, clockLabel, dateLabel, minutes, type Appointment } from '@/lib/clinic';
 import { unresolvedVisits } from '@/lib/unresolved';
 import { dayBuckets } from '@/lib/schedule';
@@ -23,11 +23,12 @@ export default function TodayView({ w }: { w: Workspace }) {
   const tomorrow = appointments.filter(a => a.date === addDays(now.date, 1) && a.status === 'scheduled' && mine(a)).sort((x, y) => x.time.localeCompare(y.time));
   const issues = w.deliveries.filter(d => d.status === 'failed' || d.status === 'unknown');
   const rxFor = (a: Appointment) => w.prescriptions.find(rx => rx.appointmentId === a.id);
+  const billFor = (a: Appointment) => w.bills.find(x => x.appointmentId === a.id && x.status === 'active');
   const next = b.current[0] || b.upcoming[0];
   const nowLine = b.active.findIndex(a => minutes(a.time) > minutes(now.time));
 
   const row = (a: Appointment) => {
-    const p = w.patient(a.patientId); const rx = rxFor(a);
+    const p = w.patient(a.patientId); const rx = rxFor(a); const bill = billFor(a);
     const ended = minutes(a.time) + a.duration <= minutes(now.time);
     const isNow = b.current.includes(a);
     return <div key={a.id} className={`q-row q-${a.status}${isNow ? ' q-now' : ''}`}>
@@ -43,6 +44,9 @@ export default function TodayView({ w }: { w: Workspace }) {
         {w.clinic.prescriptionsEnabled && a.status !== 'cancelled' && a.status !== 'missed' && (rx
           ? <button className="btn btn-sm btn-ghost" onClick={() => w.writeRx({ item: rx })} title="View prescription"><FileText size={15} /><span>Rx{rx.sentAt ? ' ✓' : ''}</span></button>
           : <button className="btn btn-sm btn-ghost" onClick={() => w.writeRx({ patientId: a.patientId, doctorId: a.doctorId, appointmentId: a.id })} title="Write prescription"><FileText size={15} /><span>Rx</span></button>)}
+        {w.billingOn && a.status !== 'cancelled' && a.status !== 'missed' && (bill
+          ? <button className="btn btn-sm btn-ghost" onClick={() => w.openBill(bill.id)} title="Open bill"><IndianRupee size={15} /><span>Bill ✓</span></button>
+          : <button className="btn btn-sm btn-ghost" onClick={() => w.newBill({ patientId: a.patientId, doctorId: a.doctorId, appointmentId: a.id, reason: a.reason })} title="Make bill"><IndianRupee size={15} /><span>Bill</span></button>)}
       </div>
     </div>;
   };

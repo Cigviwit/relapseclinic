@@ -2,6 +2,7 @@
 import { useState } from 'react';
 import { addDays } from '@/lib/clinic';
 import { computeImpact } from '@/lib/impact';
+import { collectedBetween, formatMoney, recoveredRevenue } from '@/lib/billing';
 import { Chips } from '../kit';
 import type { Workspace } from './types';
 
@@ -14,6 +15,7 @@ export default function ImpactView({ w }: { w: Workspace }) {
   const impact = computeImpact(w.appointments, w.deliveries, from ? { from, to: w.now.date } : undefined);
   const max = Math.max(1, ...Object.values(impact.messagesBySlot));
   const feeNum = Number(fee) || 0;
+  const recovered = w.billingOn ? recoveredRevenue(w.appointments, w.deliveries, w.bills, w.ledger, from, w.now.date) : null;
   return <div className="page">
     <header className="page-head"><div><p className="eyebrow">{w.clinic.name}</p><h1>Impact</h1></div>
       <Chips label="Period" size="sm" value={days} onChange={setDays} options={[{ value: '30', label: '30 days' }, { value: '90', label: '90 days' }, { value: 'all', label: 'All time' }]} /></header>
@@ -28,11 +30,14 @@ export default function ImpactView({ w }: { w: Workspace }) {
       <section className="card"><h2 className="card-title">Messages by type</h2>
         <ul className="bars">{Object.entries(slotName).map(([k, l]) => <li key={k}><span>{l}</span><span className="bar"><i style={{ width: `${((impact.messagesBySlot[k] || 0) / max) * 100}%` }} /></span><strong>{impact.messagesBySlot[k] || 0}</strong></li>)}</ul>
       </section>
-      <section className="card"><h2 className="card-title">Recovered revenue</h2>
+      {recovered ? <section className="card"><h2 className="card-title">Recovered revenue</h2>
+        <p className="big-number">{formatMoney(recovered.amount)}</p>
+        <small className="muted">Actually paid on {recovered.visits} return visit{recovered.visits === 1 ? '' : 's'} after a missed-visit follow-up. Total collected in this period: {formatMoney(collectedBetween(w.ledger, from, w.now.date))}.</small>
+      </section> : <section className="card"><h2 className="card-title">Recovered revenue</h2>
         <label className="field"><span className="field-label">Average fee per visit (₹)</span><input className="input" inputMode="numeric" value={fee} placeholder="e.g. 500" onChange={e => { const v = e.target.value.replace(/\D/g, ''); setFee(v); try { localStorage.setItem('impactVisitFee', v); } catch { /* storage unavailable */ } }} /></label>
         <p className="big-number">{feeNum ? `₹${(impact.recoveredVisits * feeNum).toLocaleString('en-IN')}` : '—'}</p>
         <small className="muted">{impact.recoveredVisits} recovered visit{impact.recoveredVisits === 1 ? '' : 's'} × your average fee</small>
-      </section>
+      </section>}
     </div>
   </div>;
 }

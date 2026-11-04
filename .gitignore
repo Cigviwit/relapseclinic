@@ -47,3 +47,7 @@ next-env.d.ts
 
 .vercel
 .env*.local
+
+# Generated reports and TypeScript build state
+/brag-output*/
+*.tsbuildinfo

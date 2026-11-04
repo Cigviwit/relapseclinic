@@ -1,6 +1,6 @@
 "use client";
 import { lazy, Suspense, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
-import { BarChart3, CalendarDays, CalendarPlus, FileText, Home, LogOut, MessageCircle, Search, Settings, Users } from 'lucide-react';
+import { BarChart3, CalendarDays, CalendarPlus, FileText, Home, IndianRupee, LogOut, MessageCircle, Search, Settings, Users } from 'lucide-react';
 import { Toaster, toast } from 'sonner';
 import { type Appointment, type Database, type Patient, clockLabel, initials, validateAppointment, zonedNow } from '@/lib/clinic';
 import { firestoreRepository, type DoctorDigestDelivery, type MessageDelivery, type Repository } from '@/lib/firestore-repository';
@@ -8,6 +8,7 @@ import { createDemoRepository, demoAccount, isDemoMode } from '@/lib/demo-reposi
 import { authService, getAccount, type Account } from '@/lib/auth-service';
 import { blankPrescription, repeatPrescription, withDefaults, type Prescription } from '@/lib/prescription';
 import { unresolvedVisits } from '@/lib/unresolved';
+import type { Bill, DayClosing, LedgerEntry } from '@/lib/billing';
 import AuthView from '@/components/auth/auth-view';
 import { Logo } from '@/components/logo';
 import { Kbd, Modal, Select } from '@/components/kit';
@@ -15,11 +16,14 @@ import { AppointmentForm, PatientForm } from '@/components/clinic-forms';
 import TodayView from '@/components/workspace/today-view';
 import PatientsView from '@/components/workspace/patients-view';
 import AppointmentDrawer from '@/components/workspace/appointment-drawer';
-import type { BookOptions, Page, RxOptions, Workspace } from '@/components/workspace/types';
+import type { BillOptions, BookOptions, Page, RxOptions, Workspace } from '@/components/workspace/types';
 
 // Less-used screens load on demand so the first paint stays small.
 const ScheduleView = lazy(() => import('@/components/workspace/schedule-view'));
 const ImpactView = lazy(() => import('@/components/workspace/impact-view'));
+const BillingView = lazy(() => import('@/components/workspace/billing-view'));
+const BillEditor = lazy(() => import('@/components/billing/bill-editor'));
+const BillDetail = lazy(() => import('@/components/billing/bill-detail'));
 const SettingsView = lazy(() => import('@/components/workspace/settings-view'));
 const PrescriptionBuilder = lazy(() => import('@/components/prescription/prescription-builder'));
 const CommandPalette = lazy(() => import('@/components/workspace/command-palette'));
@@ -30,6 +34,7 @@ const pages: { id: Page; label: string; icon: React.ReactNode }[] = [
   { id: 'today', label: 'Today', icon: <Home size={19} /> },
   { id: 'schedule', label: 'Schedule', icon: <CalendarDays size={19} /> },
   { id: 'patients', label: 'Patients', icon: <Users size={19} /> },
+  { id: 'billing', label: 'Billing', icon: <IndianRupee size={19} /> },
   { id: 'rx', label: 'Prescriptions', icon: <FileText size={19} /> },
   { id: 'messages', label: 'Messages', icon: <MessageCircle size={19} /> },
   { id: 'impact', label: 'Impact', icon: <BarChart3 size={19} /> },
@@ -56,6 +61,9 @@ export default function ClinicApp() {
   const [deliveries, setDeliveries] = useState<MessageDelivery[]>([]);
   const [digests, setDigests] = useState<DoctorDigestDelivery[]>([]);
   const [prescriptions, setPrescriptions] = useState<Prescription[]>([]);
+  const [bills, setBills] = useState<Bill[]>([]);
+  const [ledger, setLedger] = useState<LedgerEntry[]>([]);
+  const [closings, setClosings] = useState<DayClosing[]>([]);
   const [loadError, setLoadError] = useState('');
   const [selectedClinicId, setSelectedClinicId] = useState(() => { try { return localStorage.getItem('activeClinic') || ''; } catch { return ''; } });
   const [hashPage, hashId] = useHash().slice(1).split('/');
@@ -67,6 +75,8 @@ export default function ClinicApp() {
   const [clinicModal, setClinicModal] = useState(false);
   const [detail, setDetail] = useState<Appointment | null>(null);
   const [rxDraft, setRxDraft] = useState<Prescription | null>(null);
+  const [billDraft, setBillDraft] = useState<BillOptions | null>(null);
+  const [openBillId, setOpenBillId] = useState<string | null>(null);
   const [confirmBox, setConfirmBox] = useState<{ title: string; body: string; action: () => void; danger?: boolean; cta?: string } | null>(null);
   const [palette, setPalette] = useState(false);
   const [, setTick] = useState(0);
@@ -90,15 +100,22 @@ export default function ClinicApp() {
       repo.subscribeDoctorDigests(account, setDigests, onError),
       // Prescriptions are optional: if the rules are not deployed yet, the rest of the app still works.
       repo.subscribePrescriptions(account, setPrescriptions, e => console.warn('Prescriptions unavailable:', e.message)),
+      // Billing is private to the clinic, so the rules refuse these to the platform admin.
+      ...(demo || account.role !== 'admin' ? [
+        repo.subscribeBills(account, setBills, e => console.warn('Billing unavailable:', e.message)),
+        repo.subscribeLedger(account, setLedger, e => console.warn('Billing unavailable:', e.message)),
+        repo.subscribeDayClosings(account, setClosings, e => console.warn('Billing unavailable:', e.message)),
+      ] : []),
     ];
     const timer = setInterval(() => setTick(t => t + 1), 30000);
     return () => { unsubs.forEach(u => u()); clearInterval(timer); };
-  }, [account, repo]);
+  }, [account, repo, demo]);
 
   const clinic = db ? db.clinics.find(c => c.id === (account?.role === 'admin' ? selectedClinicId : account?.clinicId)) || db.clinics[0] : undefined;
   const now = clinic ? zonedNow(clinic.timezone) : { date: '', time: '' };
   const rxEnabled = clinic?.prescriptionsEnabled === true;
-  const navPages = rxEnabled ? pages : pages.filter(p => p.id !== 'rx');
+  const billingOn = clinic?.billingEnabled === true && (demo || account?.role !== 'admin');
+  const navPages = pages.filter(p => (p.id !== 'rx' || rxEnabled) && (p.id !== 'billing' || billingOn));
   const page = (navPages.some(p => p.id === hashPage) ? hashPage : 'today') as Page;
 
   const scoped = useMemo(() => {
@@ -112,8 +129,11 @@ export default function ClinicApp() {
       deliveries: deliveries.filter(d => d.clinicId === clinic.id),
       digests: digests.filter(d => d.clinicId === clinic.id),
       prescriptions: clinic.prescriptionsEnabled ? prescriptions.filter(r => r.clinicId === clinic.id).map(withDefaults) : [],
+      bills: bills.filter(b => b.clinicId === clinic.id),
+      ledger: ledger.filter(e => e.clinicId === clinic.id),
+      closings: closings.filter(c => c.clinicId === clinic.id),
     };
-  }, [db, clinic, deliveries, digests, prescriptions]);
+  }, [db, clinic, deliveries, digests, prescriptions, bills, ledger, closings]);
 
   const go = (p: Page, pid?: string) => { setHash(p, pid); setDetail(null); };
 
@@ -128,10 +148,11 @@ export default function ClinicApp() {
       else if (k === 'n') { e.preventDefault(); setBooking({}); }
       else if (k === 'p') { e.preventDefault(); setPatientModal({}); }
       else if (k === 'r' && clinic?.prescriptionsEnabled) { e.preventDefault(); setRxDraft(blankPrescription(clinic, now.date)); }
+      else if (k === 'b' && billingOn) { e.preventDefault(); setBillDraft({}); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [clinic, now.date]);
+  }, [clinic, now.date, billingOn]);
 
   useEffect(() => {
     const context = (document as Document & { modelContext?: { registerTool: (t: unknown, o: unknown) => void } }).modelContext;
@@ -168,12 +189,14 @@ export default function ClinicApp() {
   function savePatient(p: Patient) { repo.savePatient(p).then(() => toast.success('Patient saved')).catch(e => toast.error(e.message)); }
 
   const w: Workspace = {
-    account, db, clinic, repo, now, doctorFilter, setDoctorFilter,
+    account, db, clinic, repo, now, doctorFilter, setDoctorFilter, clinicalAccess: demo || account.role !== 'admin',
     patients: scoped.patients, appointments: scoped.appointments, deliveries: scoped.deliveries, digests: scoped.digests, prescriptions: scoped.prescriptions,
     patient: id => scoped.byId.get(id), doctor: id => scoped.doctors.get(id), doctorName: id => scoped.doctors.get(id)?.name || 'Doctor',
     go, book: o => { setDetail(null); setBooking(o || {}); }, openAppointment: setDetail,
     editPatient: p => setPatientModal({ item: p }), savePatient,
     writeRx: (o: RxOptions = {}) => { setDetail(null); setRxDraft(o.item || (o.repeat ? repeatPrescription(o.repeat, now.date, o.doctorId, o.appointmentId) : blankPrescription(clinic, now.date, o.patientId, o.doctorId || (doctorFilter !== 'all' ? doctorFilter : ''), o.appointmentId))); },
+    billingOn, bills: scoped.bills, ledger: scoped.ledger, closings: scoped.closings,
+    newBill: o => { setDetail(null); setBillDraft(o || {}); }, openBill: id => { setDetail(null); setOpenBillId(id); },
     setStatus, confirm: setConfirmBox,
     confirmMissed: a => setConfirmBox({ title: 'Mark as missed?', body: `${scoped.byId.get(a.patientId)?.name || 'The patient'} will get a WhatsApp follow-up now if they consented to messages.`, cta: 'Mark missed', action: () => { void setStatus(a, 'missed'); setDetail(null); } }),
   };
@@ -192,7 +215,7 @@ export default function ClinicApp() {
       <div className="side-top"><Logo /></div>
       <div className="side-clinic">{clinicPicker}<small>{clinic.address}</small></div>
       <nav className="side-nav" aria-label="Main">{navPages.map(p => <a key={p.id} href={'#' + p.id} className={page === p.id ? 'on' : ''} aria-current={page === p.id ? 'page' : undefined}>{p.icon}<span>{p.label}</span>{!!badge[p.id] && <em className="badge">{badge[p.id]}</em>}</a>)}</nav>
-      <div className="side-help"><p><Kbd>N</Kbd> appointment</p>{rxEnabled && <p><Kbd>R</Kbd> prescription</p>}<p><Kbd>P</Kbd> patient</p><p><Kbd>/</Kbd> search</p></div>
+      <div className="side-help"><p><Kbd>N</Kbd> appointment</p>{rxEnabled && <p><Kbd>R</Kbd> prescription</p>}{billingOn && <p><Kbd>B</Kbd> bill</p>}<p><Kbd>P</Kbd> patient</p><p><Kbd>/</Kbd> search</p></div>
       <div className="side-user"><span className="avatar t1 avatar-sm">{initials(account.user.email || 'U')}</span><span className="side-email">{account.user.email}</span><button className="btn-icon" title="Sign out" aria-label="Sign out" onClick={() => demo ? location.assign(location.origin + location.pathname) : authService.signOut()}><LogOut size={16} /></button></div>
     </aside>
 
@@ -214,6 +237,7 @@ export default function ClinicApp() {
           {page === 'today' && <TodayView w={w} />}
           {page === 'schedule' && <ScheduleView w={w} date={scheduleDate || now.date} setDate={setScheduleDate} />}
           {page === 'patients' && <PatientsView w={w} selectedId={patientId && scoped.byId.has(patientId) ? patientId : null} select={id => go('patients', id || undefined)} />}
+          {page === 'billing' && <BillingView w={w} />}
           {page === 'rx' && <RecordsViews.Prescriptions w={w} />}
           {page === 'messages' && <RecordsViews.Messages w={w} />}
           {page === 'impact' && <ImpactView w={w} />}
@@ -238,6 +262,12 @@ export default function ClinicApp() {
     </Modal>
     <Modal open={!!confirmBox} onClose={() => setConfirmBox(null)} title={confirmBox?.title}>
       {confirmBox && <div className="confirm"><p>{confirmBox.body}</p><div className="form-foot"><button className="btn btn-ghost" onClick={() => setConfirmBox(null)}>Keep as is</button><button data-autofocus className={'btn ' + (confirmBox.danger ? 'btn-danger' : 'btn-primary')} onClick={() => { confirmBox.action(); setConfirmBox(null); }}>{confirmBox.cta || 'Confirm'}</button></div></div>}
+    </Modal>
+    <Modal open={!!billDraft} onClose={() => setBillDraft(null)} title="New bill" subtitle={clinic.name} wide>
+      {billDraft && <Suspense fallback={null}><BillEditor w={w} options={billDraft} onSaved={id => { setBillDraft(null); setOpenBillId(id); }} /></Suspense>}
+    </Modal>
+    <Modal open={!!openBillId} onClose={() => setOpenBillId(null)} title="Bill" wide>
+      {openBillId && <Suspense fallback={null}><BillDetail key={openBillId} w={w} billId={openBillId} onClose={() => setOpenBillId(null)} /></Suspense>}
     </Modal>
     <RxDialog open={!!rxDraft}>{rxDraft && <Suspense fallback={<div className="rxb-loading">Opening prescription…</div>}><PrescriptionBuilder key={rxDraft.id} w={w} initial={rxDraft} onClose={() => setRxDraft(null)} /></Suspense>}</RxDialog>
     {palette && <Suspense fallback={null}><CommandPalette w={w} open={palette} onClose={() => setPalette(false)} pages={navPages} /></Suspense>}

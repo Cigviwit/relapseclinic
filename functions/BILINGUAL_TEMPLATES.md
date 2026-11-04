@@ -6,7 +6,7 @@ The patient form offers **English only**, **English + Marathi**, and **English +
 
 1. In MSG91, choose **WhatsApp → Templates → Create Template**, using the same integrated sender as the existing English templates.
 2. Create each template below with the proposed name and **Utility** category. Paste the entire body, including both paragraphs and the blank line between them. English must remain first. These are single messages, not two separate sends.
-3. Choose Marathi (`mr`) or Hindi (`hi`) for the matching template. The four templates have been created on the Relapse sender (`917276221423`) and are in Meta review as of 11 October 2026. Enabled in MSG91 does not mean approved by Meta.
+3. Choose Marathi (`mr`) or Hindi (`hi`) for the matching template. All four templates on the Relapse sender (`917276221423`) were verified as **APPROVED** through the MSG91 API on 13 October 2026, with bodies matching `bilingual-templates.json`. Enabled in MSG91 does not mean approved by Meta.
 4. Provide sample values for all placeholders in their exact numbered order. Wait until each template is approved and enabled.
 5. Copy the approved template name and **language code from its generated API example** into the secret configuration below. The saved patient preference (`en`, `mr`, `hi`) is separate from the provider template language code.
 6. After approval, deploy the messaging functions, Firestore rules and website. The checked-in `bilingual-config.json` provides the exact submitted Marathi and Hindi template names and codes automatically. The existing English-only secret remains valid; optional `bilingualTemplates` overrides in that secret take precedence.
@@ -115,7 +115,7 @@ npx firebase-tools deploy --only firestore:rules,functions --project relapse-cli
 npm run build
 ```
 
-Deploy the website through its existing hosting workflow after the build. `npm run build` alone does not publish it. No existing patient migration is needed. The four templates have been submitted to MSG91. Rules, functions and website remain undeployed pending template approval. The verified default routing requires no secret change.
+Deploy the website through its existing hosting workflow after the build. `npm run build` alone does not publish it. No existing patient migration is needed. The website, Firestore rules, and all three messaging functions (`sendBookingConfirmation`, `sendMissedVisit`, `sendScheduledReminders`) were deployed on 13 October 2026. Deploy the messaging functions too when changing server-side routing: a deployed language selector does not update the sender. The verified default routing requires no secret change.
 
 The machine-readable copy in `functions/bilingual-templates.json` matches the bodies above. Updating local copy does not update an approved MSG91 template; submit the updated version and update the configured name instead.
 

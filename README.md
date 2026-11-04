@@ -43,6 +43,37 @@ The **Dental** pad adds medical history and allergies, an FDI tooth chart (adult
 
 Prescriptions are stored in the `prescriptions` Firestore collection; sent PDFs in `prescriptionFiles` (server only).
 
+## Patient records
+
+A patient's page shows allergies first, then personal details, medical background and one history combining visits, prescriptions and notes. Records work whether or not digital prescriptions are on. New prescriptions start with the patient's age, sex and history, and show their allergies; this is a reminder, and the app does not check medicines against allergies.
+
+- `patients`: name, phone, consent and language only. Every open screen syncs this whole collection, and the messaging functions read it, so medical details stay out of it.
+- `patientRecords/{patientId}`: what is true of the patient now, loaded only while that patient is open. `version` must rise by exactly 1 on each save, so `firestore.rules` refuses an edit based on an out-of-date copy.
+- `patientNotes`: visit notes and vitals. They cannot be edited or deleted; a correction is a new note whose `corrects` names the old one. `createdAt` and `createdBy` are enforced by the rules.
+- `patientRecordAudit`: what changed in each record save, written only by the `recordPatientRecordChange` function.
+
+These three collections are private to the clinic: the rules use `clinicMember`, so the administrator account cannot read or write them, and the app shows a notice instead. Prescriptions are separate and remain visible to the administrator, including any history copied onto them.
+
+Allergy status is `unknown`, `none` or `known`, because an empty list does not tell a doctor that someone asked. A clinic shares one login, so `createdBy` and `updatedBy` identify the clinic account and a note's `doctorId` is chosen by whoever wrote it.
+
+Deploy the rules before the website, or patient pages will show “could not be loaded” for medical details: `npx firebase-tools deploy --only firestore:rules,functions:recordPatientRecordChange --project relapse-clinic-db`.
+
+## Billing
+
+Billing is off for every clinic by default. Only the administrator can turn it on, per clinic, in **Settings → Billing** (`billingEnabled`, enforced by `firestore.rules`). The administrator cannot read a clinic's bills.
+
+ClinicLoop records money; it never moves it. There is no payment gateway: patients pay by cash, card machine or the clinic's own UPI, and staff record what happened. The UPI QR uses the standard `upi://pay` link with the amount filled in, so nothing reports back; staff check the clinic's soundbox or bank app before recording it.
+
+Make a bill from Today's queue, an appointment, a patient's page or with `B`. **Settings → Billing** holds the fee list, the clinic's UPI ID and optional GST details. The logic lives in `lib/billing.ts`:
+
+- **Bills are never edited or deleted.** A wrong bill is voided with a reason. Money paid on it becomes patient credit.
+- **Ledger entries are never edited or deleted.** A wrong entry is corrected by a new reversal dated the day of the correction. A refund records that money went back; staff still return it themselves.
+- **Balances are calculated, not stored.** Money marked for a bill goes to that bill; advances and overpayments pay the oldest open bills, and the rest is credit.
+- **Closing a day is permanent.** Billing → Daily closing stores the totals and the cash count, and the rules refuse new entries on that date. Closing needs a live connection.
+- **Bill numbers come from the server.** The `assignBillNumber` function gives each bill the next number once it syncs (`2026-27/00001`, per clinic, restarting each financial year). Until then a bill shows a provisional label.
+
+"Collected by" is a typed name until staff have their own logins. Tests: `node --experimental-strip-types --test tests/billing.test.mjs`.
+
 ## Impact dashboard
 
 The **Impact** page proves the value of the follow-ups: messages sent (accepted by MSG91), missed visits followed up, missed visits rebooked, and estimated recovered visits (a follow-up was sent and the patient has a later booked or completed visit). Enter an average visit fee to estimate recovered revenue. Logic lives in `lib/impact.ts`.
