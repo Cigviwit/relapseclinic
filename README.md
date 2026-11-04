@@ -91,10 +91,10 @@ Clinic registration is closed. The platform administrator creates each clinic an
 
 | Role | Can do |
 |---|---|
-| **Owner** | Everything in the clinic: staff, settings, corrections, activity log, data download |
-| **Doctor** | Medical records, visit notes and their own prescriptions, plus bills and payments |
-| **Front desk** | Patients, booking, the medical record form, bills, payments and closing the day. Reads and sends prescriptions. No visit notes |
-| **Billing** | Patients, booking, bills, payments, voids and refunds, closing the day. No medical information |
+| **Owner** | Everything in the clinic: staff, settings, corrections, activity log, data download, merging patients |
+| **Doctor** | Medical records, visit notes, documents, treatment plans, lab work, the medicine list and their own prescriptions, plus bills and payments |
+| **Front desk** | Patients, booking, the queue, the medical record form, uploading documents, lab work, recalls, bills, payments and closing the day. Reads and sends prescriptions and reads treatment plans. No visit notes |
+| **Billing** | Patients, booking, the queue, bills, payments, voids and refunds, closing the day. No medical information |
 | **Platform administrator** | Reads everything except visit notes. Changes clinic settings, feature switches, patients, appointments and staff. Never writes clinical or billing records |
 
 `firestore.rules` and the functions enforce this table; `lib/permissions.ts` is the same table for hiding what would be refused. Only Cloud Functions write `users/{uid}`, so nobody can give themselves a role. Deactivating a person takes effect immediately and keeps everything they recorded. A clinic always keeps one active owner. The platform administrator is identified by a `platformAdmin` auth claim, set with `scripts/set-platform-admin.cjs`.
@@ -103,11 +103,37 @@ Clinic registration is closed. The platform administrator creates each clinic an
 
 Screens lock after 15 minutes without activity (owners can change this), and closing the tab does not skip the lock. Each person can also turn on two-step login with an authenticator app, once it is enabled for the project; see the runbook.
 
-**Activity log:** `audit_*` functions record who created or changed clinics, patients, appointments, prescriptions, bills, payments, closings and staff logins in `auditLog`. It stores field names, never values, so it does not become a second copy of medical data. Nobody can edit it. Reads are not logged, because Firestore cannot report them.
+**Activity log:** `audit_*` functions record who created or changed clinics, patients, appointments, prescriptions, bills, payments, closings, staff logins, documents, treatment plans, lab work, recalls, the waitlist and the medicine list in `auditLog`. It stores field names, never values, so it does not become a second copy of medical data. Nobody can edit it. Reads are not logged, because Firestore cannot report them.
 
 **Your data:** owners can download everything from **Settings → Your data**. The full download is recorded in the activity log.
 
-Daily opening/closing hours apply to every day. Appointments use clinic-local dates and times; changing timezone preserves their wall-clock times. Firebase Cloud Functions send MSG91 booking confirmations and check reminders every five minutes. Marking a past visit Missed sends the first missed-visit message immediately.
+Appointments use clinic-local dates and times; changing timezone preserves their wall-clock times. Firebase Cloud Functions send MSG91 booking confirmations and check reminders every five minutes. Marking a past visit Missed sends the first missed-visit message immediately.
+
+## Clinic day
+
+**Doctor schedules.** Settings → Doctor schedules gives each doctor their own sessions per weekday (a morning and an evening session, for example), leave, and clinic-wide closed days. Booking and free slots follow these on the browser and server (`lib/availability.ts`, mirrored in `functions/availability.js`, with a test keeping them in step). Changing hours never moves a booked visit; visits left outside the new hours are listed for rescheduling.
+
+**Queue.** Staff mark a booked visit Arrived, then Send in, then Seen. Tokens are the order of arrival that day, worked out from arrival times rather than stored, so two desks can't hand out the same number. A walk-in joins the queue on the server's clock without needing a free slot, gets no booking message, and is still refused on a closed day or when the doctor is on leave.
+
+**Waitlist.** Patients wanting an earlier slot go on the waitlist on Today. Cancelling a visit reminds staff that patients are waiting. Nothing is sent to patients automatically.
+
+**Duplicates and families.** Adding a patient warns about similar names or the same number. Owners can merge a patient registered twice from Settings: everything moves to the kept patient on the server, allergies and history from both are kept, and the merged patient stays on file so old records still resolve. It can't be undone. Family links connect relatives who share a number.
+
+**Documents.** X-rays, reports and consent forms up to 7 MB (PDF, JPEG, PNG, WebP, DICOM) live in Cloud Storage. Browsers never reach the bucket: Cloud Functions check the role and what each file really is. A file uploaded by mistake is hidden with a reason, and its bytes stay on record.
+
+## Clinical records
+
+**Visit record.** Notes and vitals written from an appointment are linked to it, so a visit shows what was recorded for it.
+
+**Allergy warnings.** Medicines on a prescription are checked against the patient's recorded allergies, including medicine families, likely penicillin and cephalosporin cross-reaction, and common Indian brand names (`lib/allergy-check.ts`). A warning must be reviewed before finalising, and that confirmation is saved with the prescription. **It is a prompt, not a guarantee:** it can't know every brand, it only knows what is recorded, and finding nothing doesn't mean a medicine is safe. It doesn't check drug interactions, which would need a licensed dataset.
+
+**Medicines and templates.** Settings → Medicines and templates holds the clinic's list with usual doses, which fill in when chosen, and saved prescription templates such as "After extraction". Templates add to what is written and never replace it.
+
+**Treatment plans.** Doctors and owners plan treatments by tooth with estimates, track them as planned, in progress, done or declined, and can bill from a plan item. Estimates aren't bills: nothing is charged until a bill is made.
+
+**Lab work.** Crowns, bridges and dentures are tracked from sent to fitted, with due dates. Today lists work that is overdue or back and waiting to be fitted.
+
+**Recalls.** A patient can be set to come back in 3, 6 or 12 months. Today lists recalls due in the next two weeks, with a WhatsApp message staff send themselves from their own number, and only for patients with consent. Automatic recall messages would need a template approved by Meta.
 
 ## Booking
 

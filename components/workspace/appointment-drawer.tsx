@@ -1,5 +1,10 @@
 import { CalendarClock, Check, DoorOpen, FileText, IndianRupee, MessageCircle, Phone, Stethoscope, Undo2, UserRound, UserX, XCircle } from 'lucide-react';
 import { clockLabel, dateLabel, minutes, type Appointment } from '@/lib/clinic';
+import { useState } from 'react';
+import { usePatientNotes } from '@/hooks/use-patient-record';
+import { visitNotes } from '@/lib/patient-record';
+import { vitalsLine } from '@/lib/prescription';
+import { NoteComposer } from './patient-record';
 import { AppointmentTimeline } from '../appointment-timeline';
 import { Avatar, Status } from '../kit';
 import type { Workspace } from './types';
@@ -10,6 +15,9 @@ export default function AppointmentDrawer({ w, appointment, onClose }: { w: Work
   const ended = w.now.date > a.date || (w.now.date === a.date && minutes(w.now.time) >= minutes(a.time) + a.duration);
   const rx = w.prescriptions.find(r => r.appointmentId === a.id);
   const bill = w.bills.find(b => b.appointmentId === a.id && b.status === 'active');
+  const notes = usePatientNotes(w.repo, w.clinic.id, w.can.readNotes ? a.patientId : '');
+  const [writing, setWriting] = useState(false);
+  const linked = notes.status === 'ready' ? visitNotes(a, notes.value) : [];
   return <div className="drawer">
     <div className="drawer-who"><Avatar name={p?.name || '?'} size="lg" /><div><h3>{p?.name || 'Patient removed'}</h3><p className="muted">{p?.phone}</p></div><Status status={a.status} /></div>
     <dl className="facts">
@@ -37,6 +45,12 @@ export default function AppointmentDrawer({ w, appointment, onClose }: { w: Work
       <button className="btn btn-ghost" onClick={() => { onClose(); w.go('patients', a.patientId); }}><UserRound size={16} />Patient history</button>
       {a.status === 'scheduled' && <button className="btn btn-ghost text-danger" onClick={() => w.confirm({ title: 'Cancel this appointment?', body: 'It stays in the patient’s history and the time slot becomes free.', cta: 'Cancel appointment', danger: true, action: () => { void w.setStatus(a, 'cancelled'); onClose(); } })}><XCircle size={16} />Cancel appointment</button>}
     </div>
+    {w.can.readNotes && a.status !== 'cancelled' && a.date <= w.now.date && <section className="visit-record">
+      <div className="sec-row"><h3 className="sec-title">Visit record</h3>{w.can.writeNotes && !writing && <button type="button" className="btn-link" onClick={() => setWriting(true)}>Add note and vitals</button>}</div>
+      {writing && <NoteComposer w={w} patientId={a.patientId} appointment={a} onDone={() => setWriting(false)} />}
+      {linked.map(n => <div className="note-card" key={n.id}>{n.text && <p className="note-text">{n.text}</p>}{n.vitals && <p className="muted small">{vitalsLine(n.vitals)}</p>}<small className="muted">{n.createdByName || w.doctorName(n.doctorId)}</small></div>)}
+      {notes.status === 'ready' && !linked.length && !writing && <p className="muted small">Nothing noted for this visit yet.</p>}
+    </section>}
     <AppointmentTimeline appointment={a} deliveries={w.deliveries} consent={!!p?.consent} />
   </div>;
 }

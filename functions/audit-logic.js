@@ -1,7 +1,7 @@
 // The activity log: who changed what, and when. Field names only, so it never becomes a second copy of medical data.
-const AUDITED = ['clinics', 'patients', 'appointments', 'prescriptions', 'bills', 'ledgerEntries', 'dayClosings', 'users', 'waitlist', 'patientFiles'];
+const AUDITED = ['clinics', 'patients', 'appointments', 'prescriptions', 'bills', 'ledgerEntries', 'dayClosings', 'users', 'waitlist', 'patientFiles', 'treatmentPlans', 'labCases', 'recalls', 'clinicCatalogs'];
 /** Bookkeeping written by the system, not by a person. A change to only these is not worth logging. */
-const SYSTEM_FIELDS = new Set(['number', 'sentAt', 'updatedAt', 'updatedBy']);
+const SYSTEM_FIELDS = new Set(['number', 'sentAt', 'updatedAt', 'updatedBy', 'version']);
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
 function changedFields(before = {}, after = {}) {

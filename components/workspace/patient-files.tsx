@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { Download, FileImage, FileText, Trash2, Upload } from 'lucide-react';
 import { dateLabel } from '@/lib/clinic';
+import { localDate } from '@/lib/patient-record';
 import { downloadBytes, fileKinds, fromBase64, MAX_UPLOAD_BYTES, sizeLabel, toBase64Async, type PatientFile } from '@/lib/patient-file';
 import { Field, FormError, Modal, Select } from '../kit';
 import type { Workspace } from './types';
@@ -37,6 +38,7 @@ export function PatientFiles({ w, patientId }: { w: Workspace; patientId: string
   const [viewing, setViewing] = useState<{ name: string; url: string } | null>(null);
   const [removing, setRemoving] = useState<PatientFile | null>(null);
   const [reason, setReason] = useState('');
+  const [opening, setOpening] = useState('');
   const urlRef = useRef('');
   const { repo } = w;
   const clinicId = w.clinic.id;
@@ -46,6 +48,7 @@ export function PatientFiles({ w, patientId }: { w: Workspace; patientId: string
   const canUpload = w.can.writeRecords;
 
   async function open(file: PatientFile) {
+    setOpening(file.id);
     try {
       const { data, contentType, name } = await repo.getPatientFile(file.id);
       const bytes = fromBase64(data);
@@ -53,7 +56,7 @@ export function PatientFiles({ w, patientId }: { w: Workspace; patientId: string
       if (urlRef.current) URL.revokeObjectURL(urlRef.current);
       urlRef.current = URL.createObjectURL(new Blob([bytes as BlobPart], { type: contentType }));
       setViewing({ name, url: urlRef.current });
-    } catch (e) { toast.error((e as Error).message); }
+    } catch (e) { toast.error((e as Error).message); } finally { setOpening(''); }
   }
   async function remove() {
     if (!removing || !reason.trim()) return;
@@ -68,7 +71,7 @@ export function PatientFiles({ w, patientId }: { w: Workspace; patientId: string
     <ul className="plain-list">{shown.map(f => <li key={f.id} className="row-between">
       <button type="button" className="btn-link-plain file-row" onClick={() => void open(f)}>
         {f.contentType.startsWith('image/') ? <FileImage size={16} /> : <FileText size={16} />}
-        <span><strong>{f.name}</strong><small>{fileKinds.find(k => k.value === f.kind)?.label} · {f.createdAt ? dateLabel(f.createdAt.slice(0, 10), { day: 'numeric', month: 'short', year: 'numeric' }) : ''} · {sizeLabel(f.size)}{f.note ? ` · ${f.note}` : ''}</small></span>
+        <span><strong>{f.name}{opening === f.id ? ' · opening…' : ''}</strong><small>{fileKinds.find(k => k.value === f.kind)?.label} · {f.createdAt ? dateLabel(localDate(f.createdAt, w.clinic.timezone), { day: 'numeric', month: 'short', year: 'numeric' }) : ''} · {sizeLabel(f.size)}{f.note ? ` · ${f.note}` : ''}</small></span>
       </button>
       <span className="row-tight">
         {!f.contentType.startsWith('image/') && <Download size={14} className="muted" aria-hidden />}

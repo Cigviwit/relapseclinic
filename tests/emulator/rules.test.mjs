@@ -177,6 +177,54 @@ test('staff keep the waitlist, and entries can only move on, never be erased', a
   await assertFails(deleteDoc(doc(as('owner'), 'waitlist', 'w9')));
 });
 
+// --- Dental records ---
+const plan = (who, over = {}) => ({ id: 'tp9', clinicId: C, patientId: 'p1', doctorId: 'd2', title: 'Plan', items: [{ id: 'i', procedure: 'Crown', teeth: [36], estimate: 100, status: 'planned' }], status: 'active', createdAt: 'now', version: 1, updatedBy: who, updatedAt: serverTimestamp(), ...over });
+const lab = (who, over = {}) => ({ id: 'lc9', clinicId: C, patientId: 'p1', doctorId: 'd2', labName: 'Lab', work: 'Crown', teeth: [36], sentOn: '2026-11-05', dueOn: '2026-11-10', status: 'sent', createdAt: 'now', updatedBy: who, updatedAt: serverTimestamp(), ...over });
+const recall = (who, over = {}) => ({ id: 'rc9', clinicId: C, patientId: 'p1', due: '2027-05-05', reason: 'Check-up', status: 'due', createdAt: 'now', updatedBy: who, updatedAt: serverTimestamp(), ...over });
+
+test('doctors and owners write treatment plans; a stale edit is refused and plans are never erased', async () => {
+  await assertSucceeds(setDoc(doc(as('doctor'), 'treatmentPlans', 'tp9'), plan('doctor')));
+  await assertFails(setDoc(doc(as('frontdesk'), 'treatmentPlans', 'tp8'), plan('frontdesk', { id: 'tp8' })));
+  await assertFails(setDoc(doc(admin(), 'treatmentPlans', 'tp7'), plan('platform', { id: 'tp7' })));
+  await assertSucceeds(getDoc(doc(as('frontdesk'), 'treatmentPlans', 'tp9')));
+  await assertSucceeds(getDoc(doc(admin(), 'treatmentPlans', 'tp9')));
+  await assertFails(getDoc(doc(as('billing'), 'treatmentPlans', 'tp9')));
+  await assertFails(setDoc(doc(as('doctor'), 'treatmentPlans', 'tp9'), plan('doctor', { version: 1 })), 'version must rise');
+  await assertSucceeds(setDoc(doc(as('owner'), 'treatmentPlans', 'tp9'), plan('owner', { version: 2, status: 'closed' })));
+  await assertFails(setDoc(doc(as('owner'), 'treatmentPlans', 'tp9'), plan('owner', { version: 3, patientId: 'p2' })), 'cannot move to another patient');
+  await assertFails(deleteDoc(doc(as('owner'), 'treatmentPlans', 'tp9')));
+});
+
+test('clinical staff track lab work and recalls; billing and other clinics cannot', async () => {
+  await assertSucceeds(setDoc(doc(as('frontdesk'), 'labCases', 'lc9'), lab('frontdesk')));
+  await assertFails(setDoc(doc(as('billing'), 'labCases', 'lc8'), lab('billing', { id: 'lc8' })));
+  await assertFails(setDoc(doc(as('outsider'), 'labCases', 'lc7'), lab('outsider', { id: 'lc7' })));
+  await assertFails(setDoc(doc(as('frontdesk'), 'labCases', 'lc6'), lab('frontdesk', { id: 'lc6', dueOn: '2026-11-01' })), 'due before sent');
+  await assertSucceeds(setDoc(doc(as('doctor'), 'labCases', 'lc9'), lab('doctor', { status: 'received' })));
+  await assertFails(deleteDoc(doc(as('owner'), 'labCases', 'lc9')));
+  await assertSucceeds(setDoc(doc(as('frontdesk'), 'recalls', 'rc9'), recall('frontdesk')));
+  await assertFails(setDoc(doc(as('frontdesk'), 'recalls', 'rc8'), recall('owner', { id: 'rc8' })), 'stamp must be the writer');
+  await assertFails(setDoc(doc(as('billing'), 'recalls', 'rc7'), recall('billing', { id: 'rc7' })));
+  await assertSucceeds(setDoc(doc(as('frontdesk'), 'recalls', 'rc9'), recall('frontdesk', { status: 'booked' })));
+  await assertFails(deleteDoc(doc(as('owner'), 'recalls', 'rc9')));
+});
+
+test('those who prescribe keep the medicine list', async () => {
+  const catalog = (who) => ({ id: C, clinicId: C, medicines: [], templates: [], updatedBy: who, updatedAt: serverTimestamp() });
+  await assertSucceeds(setDoc(doc(as('doctor'), 'clinicCatalogs', C), catalog('doctor')));
+  await assertFails(setDoc(doc(as('frontdesk'), 'clinicCatalogs', C), catalog('frontdesk')));
+  await assertFails(setDoc(doc(as('outsider'), 'clinicCatalogs', C), catalog('outsider')));
+  await assertFails(setDoc(doc(admin(), 'clinicCatalogs', C), catalog('platform')));
+  await assertSucceeds(getDoc(doc(as('frontdesk'), 'clinicCatalogs', C)));
+  await assertFails(getDoc(doc(as('billing'), 'clinicCatalogs', C)));
+  await assertFails(deleteDoc(doc(as('owner'), 'clinicCatalogs', C)));
+});
+
+test('a prescription keeps the allergy confirmation, and a note can be linked to its visit', async () => {
+  await assertSucceeds(setDoc(doc(as('doctor'), 'prescriptions', 'rx9'), rx('doctor', { allergyOverride: ['Tab Augmentin'] })));
+  await assertSucceeds(setDoc(doc(as('doctor'), 'patientNotes', 'n9'), note('doctor', { appointmentId: 'a1' })));
+});
+
 // --- Clinical privacy ---
 test('visit notes are for doctors and owners only, and the platform admin cannot read them', async () => {
   await assertSucceeds(getDoc(doc(as('doctor'), 'patientNotes', 'n1')));

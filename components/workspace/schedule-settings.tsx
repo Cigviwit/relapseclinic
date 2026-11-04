@@ -73,7 +73,7 @@ export function ScheduleSettings({ w }: { w: Workspace }) {
     try {
       await w.repo.saveClinic(next);
       const stranded = strandedVisits(w.appointments, next, w.now.date);
-      if (stranded.length) toast.warning(`Saved. ${stranded.length} booked visit${stranded.length === 1 ? ' is' : 's are'} now outside these hours and need rescheduling.`);
+      if (stranded.length) toast.warning(`Saved. ${stranded.length === 1 ? '1 booked visit is now outside these hours and needs' : `${stranded.length} booked visits are now outside these hours and need`} rescheduling.`);
       else toast.success('Schedule saved');
     } catch (e) { toast.error((e as Error).message); }
   }

@@ -108,6 +108,7 @@ test('the activity log records field names, never their values', () => {
 test('system bookkeeping alone is not logged; creates and deletes are', () => {
   assert.equal(auditEntry('bills', 'b1', { clinicId: 'c1' }, { clinicId: 'c1', number: '2026-27/00001' }), null);
   assert.equal(auditEntry('prescriptions', 'r', { clinicId: 'c1' }, { clinicId: 'c1', sentAt: 'now' }), null);
+  assert.deepEqual(auditEntry('treatmentPlans', 't', { clinicId: 'c1', version: 1, title: 'a' }, { clinicId: 'c1', version: 2, title: 'b' }).fields, ['title'], 'the version number is bookkeeping');
   assert.equal(auditEntry('bills', 'b1', undefined, { clinicId: 'c1', patientId: 'p', createdByUid: 'u' }).action, 'create');
   assert.equal(auditEntry('users', 'u1', { clinicId: 'c1' }, undefined).action, 'delete');
   assert.equal(auditEntry('clinics', 'c1', undefined, { name: 'x', updatedBy: 'admin' }).clinicId, 'c1');

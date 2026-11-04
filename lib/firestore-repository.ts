@@ -9,6 +9,8 @@ import { mergeById } from "./data-window";
 import type { VisitStage } from "./queue";
 import type { WaitlistEntry } from "./front-desk";
 import type { PatientFile } from "./patient-file";
+import type { Catalog } from "./catalog";
+import { OPEN_LAB, type LabCase, type Recall, type TreatmentPlan } from "./dental";
 import { plainValue } from "./csv";
 import type { StaffRole } from "./permissions";
 
@@ -76,6 +78,16 @@ export type Repository = {
   uploadPatientFile(input: { clinicId: string; patientId: string; name: string; kind: string; note?: string; data: string }): Promise<void>;
   getPatientFile(id: string): Promise<{ name: string; contentType: string; data: string }>;
   removePatientFile(id: string, reason: string): Promise<void>;
+  subscribeCatalog(clinicId: string, onUpdate: (catalog: Catalog | null) => void, onError: OnError): Unsubscribe;
+  saveCatalog(catalog: Catalog): Promise<void>;
+  subscribePlans(clinicId: string, patientId: string, onUpdate: (plans: TreatmentPlan[]) => void, onError: OnError): Unsubscribe;
+  /** `plan.version` is the version the edit started from. Refused if someone has saved since. */
+  savePlan(plan: TreatmentPlan): Promise<void>;
+  subscribeOpenLabCases(clinicId: string, onUpdate: (cases: LabCase[]) => void, onError: OnError): Unsubscribe;
+  subscribePatientLabCases(clinicId: string, patientId: string, onUpdate: (cases: LabCase[]) => void, onError: OnError): Unsubscribe;
+  saveLabCase(labCase: LabCase): Promise<void>;
+  subscribeDueRecalls(clinicId: string, onUpdate: (recalls: Recall[]) => void, onError: OnError): Unsubscribe;
+  saveRecall(recall: Recall): Promise<void>;
   subscribeStaff(clinicId: string, onUpdate: (staff: StaffMember[]) => void, onError: OnError): Unsubscribe;
   createStaff(input: NewStaff): Promise<{ uid: string; setupLink: string }>;
   updateStaff(input: { uid: string; name?: string; role?: StaffRole; doctorId?: string; active?: boolean }): Promise<void>;
@@ -103,7 +115,7 @@ const toAppointment = (row: DocumentData) => ({ ...row, ...(row.arrivedAt ? { ar
 const toPrescription = (row: DocumentData) => withDefaults({ ...row, finalizedAt: iso(row.finalizedAt) } as unknown as Prescription);
 
 // File contents stay in Cloud Storage: the download lists them and they are fetched one at a time.
-const EXPORTED = ["patients", "appointments", "patientRecords", "patientNotes", "prescriptions", "bills", "ledgerEntries", "dayClosings", "messageDeliveries", "waitlist", "patientFiles"];
+const EXPORTED = ["patients", "appointments", "patientRecords", "patientNotes", "prescriptions", "bills", "ledgerEntries", "dayClosings", "messageDeliveries", "waitlist", "patientFiles", "treatmentPlans", "labCases", "recalls"];
 const EXPORT_PAGE = 500;
 
 export const firestoreRepository: Repository = {
@@ -192,6 +204,18 @@ export const firestoreRepository: Repository = {
       throw error;
     }
   },
+  subscribeCatalog: (clinicId, onUpdate, onError) => onSnapshot(doc(firestore, "clinicCatalogs", clinicId), snap => onUpdate(snap.exists() ? snap.data() as Catalog : null), onError),
+  saveCatalog: catalog => setDoc(doc(firestore, "clinicCatalogs", catalog.id), { id: catalog.id, clinicId: catalog.clinicId, medicines: catalog.medicines, templates: catalog.templates, updatedBy: uid(), updatedAt: serverTimestamp() }),
+  subscribePlans: (clinicId, patientId, onUpdate, onError) => onSnapshot(forPatient("treatmentPlans", clinicId, patientId), snap => onUpdate(rows(snap) as TreatmentPlan[]), onError),
+  async savePlan(plan) {
+    try { await setDoc(doc(firestore, "treatmentPlans", plan.id), { ...defined(plan), version: plan.version + 1, updatedBy: uid(), updatedAt: serverTimestamp() }); }
+    catch (e) { throw (e as { code?: string }).code === "permission-denied" && plan.version > 0 ? new Error(staleRecordMessage) : e; }
+  },
+  subscribeOpenLabCases: (clinicId, onUpdate, onError) => onSnapshot(query(collection(firestore, "labCases"), where("clinicId", "==", clinicId), where("status", "in", OPEN_LAB)), snap => onUpdate(rows(snap) as LabCase[]), onError),
+  subscribePatientLabCases: (clinicId, patientId, onUpdate, onError) => onSnapshot(forPatient("labCases", clinicId, patientId), snap => onUpdate(rows(snap) as LabCase[]), onError),
+  saveLabCase: labCase => setDoc(doc(firestore, "labCases", labCase.id), { ...defined(labCase), updatedBy: uid(), updatedAt: serverTimestamp() }),
+  subscribeDueRecalls: (clinicId, onUpdate, onError) => onSnapshot(query(collection(firestore, "recalls"), where("clinicId", "==", clinicId), where("status", "==", "due")), snap => onUpdate(rows(snap) as Recall[]), onError),
+  saveRecall: recall => setDoc(doc(firestore, "recalls", recall.id), { ...defined(recall), updatedBy: uid(), updatedAt: serverTimestamp() }),
   subscribePatientFiles: (clinicId, patientId, onUpdate, onError) => onSnapshot(forPatient("patientFiles", clinicId, patientId), snap => onUpdate(rows(snap).map(row => ({ ...row, createdAt: iso(row.createdAt), removedAt: iso(row.removedAt) }) as PatientFile)), onError),
   uploadPatientFile: input => callFunction("uploadPatientFile", input, 120000),
   getPatientFile: id => callFunction("getPatientFile", { id }, 120000),

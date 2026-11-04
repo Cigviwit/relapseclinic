@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { CalendarPlus, GitMerge, Unlink, UserPlus, Users, X } from 'lucide-react';
 import { dateLabel, type Patient } from '@/lib/clinic';
+import { localDate } from '@/lib/patient-record';
 import { duplicatePairs, familyMembers, sharedFamilyId } from '@/lib/front-desk';
 import { Field, FormError, Modal, Select } from '../kit';
 import { PatientPicker } from '../patient-picker';
@@ -14,7 +15,7 @@ export function WaitlistCard({ w }: { w: Workspace }) {
   return <section className="card">
     <div className="card-head card-head-row"><h2>Waitlist</h2><span className="count">{entries.length}</span></div>
     <ul className="plain-list">{entries.map(e => <li key={e.id} className="row-between">
-      <button type="button" className="btn-link-plain" onClick={() => w.go('patients', e.patientId)}><strong>{w.patient(e.patientId)?.name || 'Patient'}</strong><small>{e.doctorId ? w.doctorName(e.doctorId) : 'Any doctor'}{e.note ? ` · ${e.note}` : ''}{e.createdAt ? ` · since ${dateLabel(e.createdAt.slice(0, 10), { day: 'numeric', month: 'short' })}` : ''}</small></button>
+      <button type="button" className="btn-link-plain" onClick={() => w.go('patients', e.patientId)}><strong>{w.patient(e.patientId)?.name || 'Patient'}</strong><small>{e.doctorId ? w.doctorName(e.doctorId) : 'Any doctor'}{e.note ? ` · ${e.note}` : ''}{e.createdAt ? ` · since ${dateLabel(localDate(e.createdAt, w.clinic.timezone), { day: 'numeric', month: 'short' })}` : ''}</small></button>
       <span className="row-tight">
         <button type="button" className="btn btn-sm btn-soft" onClick={() => w.book({ patientId: e.patientId, doctorId: e.doctorId || undefined, waitlistId: e.id })}><CalendarPlus size={14} />Book</button>
         <button type="button" className="btn-icon" aria-label={`Remove ${w.patient(e.patientId)?.name || 'patient'} from the waitlist`} onClick={() => w.repo.setWaitlistStatus(e.id, 'removed').catch(err => toast.error((err as Error).message))}><X size={14} /></button>

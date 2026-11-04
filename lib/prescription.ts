@@ -14,6 +14,8 @@ export type Prescription = {
   createdAt: string; sentAt: string;
   /** A draft may change. A final prescription never does: a mistake is fixed by a new one whose `amends` names it. */
   status: 'draft' | 'final'; amends?: string; finalizedBy?: string; finalizedAt?: string;
+  /** Medicines the prescriber confirmed despite an allergy warning. */
+  allergyOverride?: string[];
 };
 
 export const frequencies = ['1-0-1', '1-0-0', '0-0-1', '1-1-1', '0-1-0', '1-1-1-1', 'SOS', 'Once a week'];
@@ -42,12 +44,12 @@ export const teethText = (teeth: number[]) => [...teeth].sort((a, b) => a - b).j
 
 /** Copy a previous prescription into a new draft dated today (for "repeat last Rx"). */
 export function repeatPrescription(previous: Prescription, date: string, doctorId?: string, appointmentId = ''): Prescription {
-  return { ...previous, id: crypto.randomUUID(), date, doctorId: doctorId || previous.doctorId, appointmentId, vitals: blankVitals(), followUp: '', createdAt: '', sentAt: '', status: 'draft', amends: undefined, finalizedBy: undefined, finalizedAt: undefined, medicines: previous.medicines.map(m => ({ ...m, id: crypto.randomUUID() })) };
+  return { ...previous, id: crypto.randomUUID(), date, doctorId: doctorId || previous.doctorId, appointmentId, vitals: blankVitals(), followUp: '', createdAt: '', sentAt: '', status: 'draft', amends: undefined, finalizedBy: undefined, finalizedAt: undefined, allergyOverride: undefined, medicines: previous.medicines.map(m => ({ ...m, id: crypto.randomUUID() })) };
 }
 
 /** A new draft to correct a final prescription, keeping everything it said. It replaces the old one once finalised. */
 export function amendPrescription(previous: Prescription, date: string): Prescription {
-  return { ...previous, id: crypto.randomUUID(), date, createdAt: '', sentAt: '', status: 'draft', amends: previous.id, finalizedBy: undefined, finalizedAt: undefined, medicines: previous.medicines.map(m => ({ ...m, id: crypto.randomUUID() })) };
+  return { ...previous, id: crypto.randomUUID(), date, createdAt: '', sentAt: '', status: 'draft', amends: previous.id, finalizedBy: undefined, finalizedAt: undefined, allergyOverride: undefined, medicines: previous.medicines.map(m => ({ ...m, id: crypto.randomUUID() })) };
 }
 
 /** The prescriptions still in force. One is replaced only once its amendment is final: an unfinished draft replaces nothing. */

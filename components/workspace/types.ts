@@ -6,11 +6,13 @@ import type { Bill, DayClosing, LedgerEntry } from '@/lib/billing';
 import type { Permissions } from '@/lib/permissions';
 import type { VisitStage } from '@/lib/queue';
 import type { WaitlistEntry } from '@/lib/front-desk';
+import type { Catalog } from '@/lib/catalog';
+import type { LabCase, Recall } from '@/lib/dental';
 
-export type Page = 'today' | 'schedule' | 'patients' | 'billing' | 'rx' | 'messages' | 'impact' | 'settings';
+export type Page = 'today' | 'schedule' | 'patients' | 'billing' | 'rx' | 'lab' | 'messages' | 'impact' | 'settings';
 
-export type BookOptions = { patientId?: string; doctorId?: string; date?: string; time?: string; item?: Appointment; waitlistId?: string };
-export type BillOptions = { patientId?: string; doctorId?: string; appointmentId?: string; reason?: string };
+export type BookOptions = { patientId?: string; doctorId?: string; date?: string; time?: string; item?: Appointment; waitlistId?: string; recallId?: string };
+export type BillOptions = { patientId?: string; doctorId?: string; appointmentId?: string; reason?: string; price?: number };
 export type RxOptions = { patientId?: string; doctorId?: string; appointmentId?: string; item?: Prescription; repeat?: Prescription };
 
 /** Everything a workspace page needs, computed once per render in the shell. */
@@ -36,6 +38,7 @@ export type Workspace = {
   setStatus: (a: Appointment, status: Appointment['status']) => Promise<void>;
   setStage: (a: Appointment, stage: VisitStage | null) => void;
   waitlist: WaitlistEntry[];
+  catalog: Catalog; recalls: Recall[]; openLabs: LabCase[];
   addWalkIn: (patientId?: string) => void;
   confirmMissed: (a: Appointment) => void;
   confirm: (c: { title: string; body: string; action: () => void; danger?: boolean; cta?: string }) => void;

@@ -4,6 +4,8 @@ import { staleRecordMessage, type AuditEntry, type Repository, type MessageDeliv
 import { roleOptions, type Role } from './permissions';
 import type { WaitlistEntry } from './front-desk';
 import type { PatientFile } from './patient-file';
+import type { Catalog } from './catalog';
+import { OPEN_LAB, type LabCase, type Recall, type TreatmentPlan } from './dental';
 import type { Prescription } from './prescription';
 import { blankPatientRecord, recordChanges, type PatientNote, type PatientRecord, type RecordAudit } from './patient-record';
 import { closingId, daySummary, makeClosing, type Bill, type DayClosing, type LedgerEntry } from './billing';
@@ -85,7 +87,11 @@ function demoData() {
     { id: 'l2', clinicId: 'greenleaf', collection: 'bills', docId: 'b1', action: 'create', fields: [], patientId: 'p0', actorUid: 'demo-frontdesk', actorName: 'Asha Kulkarni', at: stamp },
     { id: 'l3', clinicId: 'greenleaf', collection: 'prescriptions', docId: 'rx1', action: 'create', fields: [], patientId: 'p0', actorUid: 'demo-owner', actorName: 'Dr. Priya Nair', at: stamp },
   ];
-  return { db, deliveries, prescriptions, records, notes, audit, digests: [] as DoctorDigestDelivery[], bills, ledger, closings: [] as DayClosing[], staff, activity, waitlist: [{ id: 'wl1', clinicId: 'greenleaf', patientId: 'p4', doctorId: '', note: 'Weekday evenings', status: 'waiting', createdAt: stamp }] as WaitlistEntry[], files: [] as (PatientFile & { data: string })[] };
+  return { db, deliveries, prescriptions, records, notes, audit, digests: [] as DoctorDigestDelivery[], bills, ledger, closings: [] as DayClosing[], staff, activity, waitlist: [{ id: 'wl1', clinicId: 'greenleaf', patientId: 'p4', doctorId: '', note: 'Weekday evenings', status: 'waiting', createdAt: stamp }] as WaitlistEntry[], files: [] as (PatientFile & { data: string })[],
+    catalog: { id: 'greenleaf', clinicId: 'greenleaf', medicines: [{ id: 'cm1', name: 'Tab Amoxicillin 500 mg', frequency: '1-1-1', timing: 'after', days: '5', notes: '' }, { id: 'cm2', name: 'Tab Ketorolac 10 mg', frequency: 'SOS', timing: 'after', days: '3', notes: 'Only if there is pain' }], templates: [{ id: 'rt1', name: 'After extraction', diagnosis: '', procedures: 'Extraction', plan: '', tests: '', advice: 'Bite on the gauze for 30 minutes\nNo spitting or hot food today', medicines: [{ id: 'rt1m', name: 'Tab Ketorolac 10 mg', frequency: 'SOS', timing: 'after', days: '3', notes: '' }] }] } as Catalog,
+    plans: [{ id: 'plan1', clinicId: 'greenleaf', patientId: 'p0', doctorId: 'priya', title: 'Lower left molar', status: 'active', createdAt: stamp, version: 1, items: [{ id: 'pi1', procedure: 'Root canal treatment', teeth: [36], estimate: 700000, status: 'in_progress' }, { id: 'pi2', procedure: 'Zirconia crown', teeth: [36], estimate: 1200000, status: 'planned' }, { id: 'pi3', procedure: 'Scaling & polishing', teeth: [], estimate: 150000, status: 'done' }] }] as TreatmentPlan[],
+    labs: [{ id: 'lab1', clinicId: 'greenleaf', patientId: 'p0', doctorId: 'priya', labName: 'Precision Dental Lab', work: 'Zirconia crown', teeth: [36], shade: 'A2', sentOn: addDays(date, -6), dueOn: addDays(date, -1), status: 'sent', createdAt: stamp }, { id: 'lab2', clinicId: 'greenleaf', patientId: 'p2', doctorId: 'priya', labName: 'Precision Dental Lab', work: 'Complete denture', teeth: [], sentOn: addDays(date, -3), dueOn: addDays(date, 4), status: 'sent', createdAt: stamp }] as LabCase[],
+    recalls: [{ id: 'rc1', clinicId: 'greenleaf', patientId: 'p1', due: addDays(date, -2), reason: 'Check-up and cleaning', status: 'due', createdAt: stamp }, { id: 'rc2', clinicId: 'greenleaf', patientId: 'p6', due: addDays(date, 5), reason: 'Check-up and cleaning', status: 'due', createdAt: stamp }] as Recall[] };
 }
 
 export function createDemoRepository(): Repository {
@@ -198,6 +204,20 @@ export function createDemoRepository(): Repository {
       await later();
       return { status: 'accepted' as const };
     },
+    subscribeCatalog: (_c, onUpdate) => watch(() => onUpdate(state.catalog)),
+    saveCatalog: async catalog => { state.catalog = catalog; return later(); },
+    subscribePlans: (_c, patientId, onUpdate) => watch(() => onUpdate(state.plans.filter(x => x.patientId === patientId))),
+    savePlan: async plan => {
+      if ((state.plans.find(x => x.id === plan.id)?.version || 0) !== plan.version) throw new Error(staleRecordMessage);
+      state.plans = upsert(state.plans, { ...plan, version: plan.version + 1 });
+      log({ collection: 'treatmentPlans', docId: plan.id, action: 'update', fields: ['items'], patientId: plan.patientId });
+      return later();
+    },
+    subscribeOpenLabCases: (_c, onUpdate) => watch(() => onUpdate(state.labs.filter(c => OPEN_LAB.includes(c.status)))),
+    subscribePatientLabCases: (_c, patientId, onUpdate) => watch(() => onUpdate(state.labs.filter(c => c.patientId === patientId))),
+    saveLabCase: async c => { state.labs = upsert(state.labs, c); log({ collection: 'labCases', docId: c.id, action: 'update', fields: ['status'], patientId: c.patientId }); return later(); },
+    subscribeDueRecalls: (_c, onUpdate) => watch(() => onUpdate(state.recalls.filter(r => r.status === 'due'))),
+    saveRecall: async r => { state.recalls = upsert(state.recalls, r); log({ collection: 'recalls', docId: r.id, action: 'update', fields: ['status'], patientId: r.patientId }); return later(); },
     subscribePatientFiles: (_c, patientId, onUpdate) => watch(() => onUpdate(state.files.filter(f => f.patientId === patientId).map(({ data: _data, ...f }) => f))), // eslint-disable-line @typescript-eslint/no-unused-vars
     uploadPatientFile: async ({ data, ...input }) => {
       const id = crypto.randomUUID();
@@ -214,7 +234,7 @@ export function createDemoRepository(): Repository {
     unlinkFamily: async patient => { state.db.patients = state.db.patients.map(p => { if (p.id !== patient.id) return p; const { familyId: _family, ...rest } = p; return rest; }); return later(); }, // eslint-disable-line @typescript-eslint/no-unused-vars
     mergePatients: async (_clinic, keepId, mergeId) => {
       const move = <T extends { patientId: string }>(list: T[]) => list.map(x => x.patientId === mergeId ? { ...x, patientId: keepId } : x);
-      state.db.appointments = move(state.db.appointments); state.prescriptions = move(state.prescriptions); state.notes = move(state.notes); state.bills = move(state.bills); state.ledger = move(state.ledger); state.waitlist = move(state.waitlist);
+      state.db.appointments = move(state.db.appointments); state.prescriptions = move(state.prescriptions); state.notes = move(state.notes); state.bills = move(state.bills); state.ledger = move(state.ledger); state.waitlist = move(state.waitlist); state.plans = move(state.plans); state.labs = move(state.labs); state.recalls = move(state.recalls);
       state.db.patients = state.db.patients.map(p => p.id === mergeId ? { ...p, mergedInto: keepId } : p);
       log({ collection: 'patients', docId: keepId, action: 'merge', fields: [], patientId: keepId });
       return later();

@@ -6,6 +6,10 @@ import { HISTORY_DAYS, historyStart, mergeById } from '../lib/data-window.ts';
 import { DEFAULT_LOCK_MINUTES, isIdle, lockMinutes } from '../lib/idle.ts';
 import { plainValue, toCsv } from '../lib/csv.ts';
 import { addDays, seed, validateAppointment } from '../lib/clinic.ts';
+import { allergyConflicts, unreviewedConflicts } from '../lib/allergy-check.ts';
+import { addCatalogMedicine, applyTemplate, emptyCatalog, templateFromRx, withCatalogDefaults } from '../lib/catalog.ts';
+import { visitNotes } from '../lib/patient-record.ts';
+import { labOverdue, monthsLater, nextLabSteps, parseTeeth, planTotals, recallsToCall, validateLabCase, validatePlan } from '../lib/dental.ts';
 import { amendPrescription, blankPrescription, cleanPrescription, currentPrescriptions, repeatPrescription, withDefaults } from '../lib/prescription.ts';
 import { daySummary } from '../lib/billing.ts';
 import { availabilityError, cleanWeekly, doctorDay, strandedVisits } from '../lib/availability.ts';
@@ -218,6 +222,128 @@ test('family links reuse an existing family and do not list the person themselve
   assert.deepEqual(familyMembers(list, list[2]), []);
   assert.equal(sharedFamilyId(list[2], list[0], () => 'new'), 'f');
   assert.equal(sharedFamilyId(list[2], person('d', 'D', '4'), () => 'new'), 'new');
+});
+
+// --- Allergy warnings ---
+const allergy = (substance, severity = '') => ({ id: substance, substance, reaction: '', severity });
+const names = (...list) => list.map(name => ({ name }));
+
+test('an allergy is caught by the exact medicine, its family and common Indian brands', () => {
+  const found = allergyConflicts(names('Tab Amoxicillin + Clavulanate 625 mg', 'Tab Augmentin 625', 'Tab Clavam 625', 'Tab Paracetamol 650'), [allergy('Penicillin', 'severe')]);
+  assert.deepEqual(found.map(c => c.medicine), ['Tab Amoxicillin + Clavulanate 625 mg', 'Tab Augmentin 625', 'Tab Clavam 625']);
+  assert.ok(found.every(c => c.strength === 'group' && c.severity === 'severe'));
+  assert.equal(allergyConflicts(names('Tab Ibuprofen 400'), [allergy('Ibuprofen')])[0].strength, 'same');
+  assert.deepEqual(allergyConflicts(names('Tab Combiflam'), [allergy('Aspirin')]).map(c => c.strength), ['group'], 'Combiflam contains an NSAID');
+  assert.deepEqual(allergyConflicts(names('Tab Combiflam'), [allergy('Paracetamol')]).map(c => c.strength), ['group'], 'and paracetamol');
+});
+
+test('penicillin and cephalosporin allergies warn about possible cross-reaction', () => {
+  assert.deepEqual(allergyConflicts(names('Cap Cefixime 200'), [allergy('Penicillin')]).map(c => c.strength), ['related']);
+  assert.deepEqual(allergyConflicts(names('Tab Amoxicillin 500'), [allergy('Cephalexin')]).map(c => c.strength), ['related']);
+});
+
+test('unrelated medicines, empty rows and words inside other words do not warn', () => {
+  assert.deepEqual(allergyConflicts(names('Tab Metronidazole 400', '', 'Tab Pantoprazole'), [allergy('Penicillin')]), []);
+  assert.deepEqual(allergyConflicts(names('Tab Paracetamol'), [allergy('dust')]), []);
+  assert.deepEqual(allergyConflicts(names('Cap Moxifloxacin 400'), [allergy('Penicillin')]), [], 'moxifloxacin is not a penicillin, despite "mox"');
+  assert.deepEqual(allergyConflicts(names('Tab Paracetamol'), []), []);
+});
+
+test('confirming a warning covers only those medicines; changing a medicine brings it back', () => {
+  const conflicts = allergyConflicts(names('Tab Augmentin', 'Cap Amoxicillin'), [allergy('Penicillin')]);
+  assert.equal(unreviewedConflicts(conflicts).length, 2);
+  assert.deepEqual(unreviewedConflicts(conflicts, ['Tab Augmentin']).map(c => c.medicine), ['Cap Amoxicillin']);
+  assert.equal(unreviewedConflicts(conflicts, ['Tab Augmentin', 'Cap Amoxicillin']).length, 0);
+});
+
+test('a confirmation does not carry over to an amended or repeated prescription', () => {
+  const rx = { ...blankPrescription(clinic, '2026-11-01', 'p0', 'priya'), status: 'final', allergyOverride: ['Tab Augmentin'] };
+  assert.equal(amendPrescription(rx, '2026-11-05').allergyOverride, undefined);
+  assert.equal(repeatPrescription(rx, '2026-11-05').allergyOverride, undefined);
+});
+
+// --- Medicine list and templates ---
+const catalogued = addCatalogMedicine(emptyCatalog('c'), { id: 'm', name: ' Tab Ketorolac 10 mg ', frequency: 'SOS', timing: 'after', days: '3', notes: '' });
+
+test('choosing a listed medicine fills in its usual dose, whatever the capitals', () => {
+  const filled = withCatalogDefaults({ id: 'r', name: 'tab ketorolac 10 MG', frequency: '1-0-1', timing: '', days: '5', notes: '' }, catalogued);
+  assert.deepEqual([filled.frequency, filled.timing, filled.days, filled.id], ['SOS', 'after', '3', 'r']);
+  const written = { id: 'r', name: 'Tab Ketorolac 10 mg', frequency: '1-0-1', timing: '', days: '5', notes: 'Take with milk' };
+  assert.deepEqual(withCatalogDefaults(written, catalogued), written, 'a note means the doctor has already worked on this row');
+  assert.throws(() => addCatalogMedicine(catalogued, { id: 'x', name: 'TAB KETOROLAC 10 MG', frequency: '', timing: '', days: '', notes: '' }), /already on the list/);
+  assert.throws(() => addCatalogMedicine(catalogued, { id: 'x', name: '  ', frequency: '', timing: '', days: '', notes: '' }), /medicine name/);
+});
+
+test('a template adds to what is written and never loses anything typed', () => {
+  const med = (name, id = name) => ({ id, name, frequency: '1-0-1', timing: 'after', days: '5', notes: '' });
+  const start = { ...blankPrescription(clinic, '2026-11-05', 'p0', 'priya'), advice: 'Soft food', medicines: [med('Tab Typed'), med('', 'blank')] };
+  const template = templateFromRx({ ...start, advice: 'No spitting', diagnosis: 'Caries', medicines: [med('Tab Typed', 'x'), med('Tab New', 'y')] }, ' After extraction ');
+  assert.equal(template.name, 'After extraction');
+  const applied = applyTemplate(start, template);
+  assert.equal(applied.advice, 'Soft food\nNo spitting');
+  assert.equal(applied.diagnosis, 'Caries');
+  assert.deepEqual(applied.medicines.map(m => m.name), ['Tab Typed', 'Tab New']);
+  assert.equal(applyTemplate(applied, template).advice, applied.advice, 'applying it twice adds nothing new');
+  assert.throws(() => templateFromRx(start, ' '), /name for the template/);
+});
+
+// --- Visit record ---
+test('a visit shows its own notes, older unlinked notes from that day, and not corrected ones', () => {
+  const visit = { id: 'a1', date: 'D', doctorId: 'd1' };
+  const note = (id, over) => ({ id, date: 'D', doctorId: 'd1', ...over });
+  const notes = [note('linked', { appointmentId: 'a1' }), note('old'), note('otherDoctor', { doctorId: 'd2' }), note('otherVisit', { appointmentId: 'a2' }), note('replaced', { appointmentId: 'a1' }), note('fixed', { appointmentId: 'a1', corrects: 'replaced' })];
+  assert.deepEqual(visitNotes(visit, notes).map(n => n.id), ['linked', 'old', 'fixed']);
+});
+
+// --- Dental ---
+test('tooth numbers must be real FDI teeth', () => {
+  assert.deepEqual(parseTeeth('37, 36 36'), [36, 37]);
+  assert.deepEqual(parseTeeth(''), []);
+  assert.deepEqual(parseTeeth('55'), [55], 'a milk tooth');
+  assert.throws(() => parseTeeth('19'), /19 is not a tooth number/);
+  assert.throws(() => parseTeeth('36, x'), /x is not a tooth number/);
+  assert.throws(() => parseTeeth('3.6'), /not a tooth number/);
+});
+
+test('plan totals leave out declined treatment', () => {
+  const item = (estimate, status) => ({ id: String(estimate), procedure: 'x', teeth: [], estimate, status });
+  assert.deepEqual(planTotals([item(100, 'done'), item(200, 'planned'), item(400, 'declined'), item(800, 'in_progress')]), { total: 1100, done: 100, count: 3, finished: 1 });
+});
+
+test('a plan needs a doctor, a patient and named treatments', () => {
+  const plan = { id: 'x', clinicId: 'c', patientId: 'p', doctorId: 'd', title: 't', status: 'active', createdAt: 'n', version: 0, items: [{ id: 'i', procedure: 'Crown', teeth: [], estimate: 0, status: 'planned' }] };
+  assert.doesNotThrow(() => validatePlan(plan));
+  assert.throws(() => validatePlan({ ...plan, items: [] }), /at least one/);
+  assert.throws(() => validatePlan({ ...plan, doctorId: '' }), /doctor/);
+  assert.throws(() => validatePlan({ ...plan, items: [{ ...plan.items[0], procedure: ' ' }] }), /needs a name/);
+});
+
+test('lab work is overdue only while it is still at the lab', () => {
+  const today = '2026-11-05';
+  assert.equal(labOverdue({ status: 'sent', dueOn: '2026-11-04' }, today), true);
+  assert.equal(labOverdue({ status: 'redo', dueOn: '2026-11-04' }, today), true);
+  assert.equal(labOverdue({ status: 'sent', dueOn: today }, today), false);
+  assert.equal(labOverdue({ status: 'received', dueOn: '2026-11-01' }, today), false);
+  assert.equal(labOverdue({ status: 'fitted', dueOn: '2026-11-01' }, today), false);
+  assert.deepEqual(nextLabSteps('sent'), ['received', 'cancelled']);
+  assert.deepEqual(nextLabSteps('received'), ['fitted', 'redo']);
+  assert.deepEqual(nextLabSteps('fitted'), []);
+});
+
+test('lab work needs its details and cannot be due before it was sent', () => {
+  const c = { patientId: 'p', work: 'Crown', labName: 'Lab', sentOn: '2026-11-05', dueOn: '2026-11-10' };
+  assert.doesNotThrow(() => validateLabCase(c));
+  assert.throws(() => validateLabCase({ ...c, dueOn: '2026-11-01' }), /before it was sent/);
+  assert.throws(() => validateLabCase({ ...c, dueOn: '' }), /due back/);
+  assert.throws(() => validateLabCase({ ...c, labName: ' ' }), /lab/);
+});
+
+test('recalls land in the right month and list those due within two weeks, oldest first', () => {
+  assert.equal(monthsLater('2026-08-31', 6), '2027-02-28');
+  assert.equal(monthsLater('2026-11-05', 12), '2027-11-05');
+  assert.equal(monthsLater('2026-11-30', 3), '2027-02-28');
+  const r = (id, due, status = 'due') => ({ id, due, status });
+  assert.deepEqual(recallsToCall([r('later', '2026-11-30'), r('soon', '2026-11-19'), r('late', '2026-10-01'), r('done', '2026-10-01', 'booked')], '2026-11-05').map(x => x.id), ['late', 'soon']);
 });
 
 // --- Browser and server must agree ---

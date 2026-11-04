@@ -8,6 +8,8 @@ import { elementToPdf, toBase64 } from '@/lib/pdf';
 import { patientLanguage } from '@/lib/patient-language';
 import { applyRxPrefill, emptyPrefill, rxPrefill } from '@/lib/patient-record';
 import { usePatientRecord } from '@/hooks/use-patient-record';
+import { allergyConflicts, unreviewedConflicts } from '@/lib/allergy-check';
+import { applyTemplate, templateFromRx, withCatalogDefaults } from '@/lib/catalog';
 import { AllergyBanner } from '../workspace/patient-record';
 import { Field, Kbd, Select } from '../kit';
 import { PatientPicker } from '../patient-picker';
@@ -37,7 +39,7 @@ export default function PrescriptionBuilder({ w, initial, onClose }: { w: Worksp
   const preset = specialties[rx.specialty];
   const has = (s: (typeof preset.sections)[number]) => preset.sections.includes(s);
   const set = (v: Partial<Prescription>) => { setRx(x => ({ ...x, ...v })); setDirty(true); setError(''); };
-  const setMed = (id: string, v: Partial<Medicine>) => set({ medicines: rx.medicines.map(m => m.id === id ? { ...m, ...v } : m) });
+  const setMed = (id: string, v: Partial<Medicine>) => set({ medicines: rx.medicines.map(m => { if (m.id !== id) return m; const next = { ...m, ...v }; return v.name !== undefined ? withCatalogDefaults(next, w.catalog) : next; }) });
   const addMed = (after?: string) => { const m = blankMedicine(); focusMed.current = m.id; const i = after ? rx.medicines.findIndex(x => x.id === after) + 1 : rx.medicines.length; set({ medicines: [...rx.medicines.slice(0, i), m, ...rx.medicines.slice(i)] }); };
   useEffect(() => { if (focusMed.current) { nameRefs.current.get(focusMed.current)?.focus(); focusMed.current = null; } });
   // Start typing straight away: the first medicine when the patient is known, otherwise the patient search.
@@ -49,11 +51,14 @@ export default function PrescriptionBuilder({ w, initial, onClose }: { w: Worksp
   // This clinic's own recent medicines first, then the specialty's common list.
   const medicineOptions = useMemo(() => {
     const recent = w.prescriptions.slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt)).flatMap(p => p.medicines.map(m => m.name));
-    return Array.from(new Set([...recent, ...preset.medicines]));
-  }, [w.prescriptions, preset]);
+    return Array.from(new Set([...w.catalog.medicines.map(m => m.name), ...recent, ...preset.medicines]));
+  }, [w.prescriptions, w.catalog, preset]);
   const lastForPatient = useMemo(() => w.prescriptions.filter(p => p.patientId === rx.patientId && p.id !== rx.id).sort((a, b) => (b.date + b.createdAt).localeCompare(a.date + a.createdAt))[0], [w.prescriptions, rx.patientId, rx.id]);
   const lang = patientLanguage(patient?.language);
   const record = usePatientRecord(w.repo, w.clinic.id, w.can.readRecords ? rx.patientId : '');
+  const allergies = record.status === 'ready' ? record.value?.allergies || [] : [];
+  const conflicts = allergyConflicts(rx.medicines, allergies);
+  const unreviewed = unreviewedConflicts(conflicts, rx.allergyOverride);
   // New drafts start from the patient's record. Doesn't mark the draft dirty: nothing has been typed yet.
   const prefilled = useRef(emptyPrefill);
   useEffect(() => {
@@ -77,6 +82,7 @@ export default function PrescriptionBuilder({ w, initial, onClose }: { w: Worksp
   /** Printing or sending a draft finalises it first, so what a patient holds always matches the record. */
   function forPatient() {
     if (!isFinal && !canWrite) throw new Error('This draft has not been finalised by the doctor yet.');
+    if (!isFinal && unreviewed.length) throw new Error(`Review the allergy warning for ${unreviewed[0].medicine} first.`);
     return prepared('final');
   }
   async function persist(clean: Prescription) {
@@ -95,6 +101,13 @@ export default function PrescriptionBuilder({ w, initial, onClose }: { w: Worksp
 
   function save() { try { if (locked) return; const clean = prepared('draft'); void run('Saving…', async () => { await persist(clean); toast.success('Draft saved'); }); } catch (e) { setError((e as Error).message); } }
   function finish() { try { const clean = forPatient(); void run('Finalising…', async () => { await persist(clean); toast.success('Prescription finalised'); }); } catch (e) { setError((e as Error).message); } }
+  function chooseTemplate(id: string) { const t = w.catalog.templates.find(x => x.id === id); if (t) { setRx(x => applyTemplate(x, t)); setDirty(true); } }
+  function saveAsTemplate() {
+    const name = window.prompt('Name this template, for example “After extraction”:');
+    if (name === null) return;
+    try { const template = templateFromRx(rx, name); w.repo.saveCatalog({ ...w.catalog, templates: [...w.catalog.templates, template] }).then(() => toast.success('Template saved')).catch(e => toast.error((e as Error).message)); }
+    catch (e) { setError((e as Error).message); }
+  }
   function amend() { if (dirty && !window.confirm('Discard unsaved changes to this prescription?')) return; w.writeRx({ item: amendPrescription(rx, w.now.date) }); }
   async function viewOriginal() {
     try { const original = rx.amends ? await w.repo.getPrescription(rx.amends) : null; if (original) w.writeRx({ item: original }); else toast.error('The original prescription could not be found.'); }
@@ -222,7 +235,15 @@ export default function PrescriptionBuilder({ w, initial, onClose }: { w: Worksp
         </section>}
 
         <section className="rxb-sec">
-          <div className="sec-row"><h3 className="rx-symbol">℞ Medicines</h3><small className="muted">Enter in a name adds the next row</small></div>
+          <div className="sec-row"><h3 className="rx-symbol">℞ Medicines</h3><span className="row-tight wrap">
+            {w.catalog.templates.length > 0 && <Select label="Use a template" className="input-sm" value="" onChange={chooseTemplate} options={[{ value: '', label: 'Use a template…' }, ...w.catalog.templates.map(t => ({ value: t.id, label: t.name }))]} />}
+            <button type="button" className="btn-link" onClick={saveAsTemplate}>Save as template</button>
+            <small className="muted">Enter in a name adds the next row</small></span></div>
+          {conflicts.length > 0 && <div className={'note ' + (unreviewed.length ? 'note-error' : 'note-warn')} role="alert">
+            <strong>Allergy warning</strong>
+            <ul className="plain-list">{conflicts.map((c, i) => <li key={i}>{c.medicine} {c.reason}{c.severity ? ` (recorded as ${c.severity})` : ''}.</li>)}</ul>
+            {unreviewed.length > 0 ? <button type="button" className="btn btn-sm btn-danger" onClick={() => set({ allergyOverride: [...new Set(conflicts.map(c => c.medicine))] })}>I have checked this and still want to prescribe</button> : <small>Reviewed. This confirmation is saved with the prescription.</small>}
+          </div>}
           <datalist id="rx-medicines">{medicineOptions.map(m => <option key={m} value={m} />)}</datalist>
           <div className="chips chips-xs med-quick">{preset.medicines.slice(0, 8).map(name => <button type="button" key={name} className="chip" onClick={() => { const empty = rx.medicines.find(m => !m.name.trim()); if (empty) setMed(empty.id, { name }); else set({ medicines: [...rx.medicines, { ...blankMedicine(), name }] }); }}>+ {name.replace(/^(Tab|Cap|Syp) /, '')}</button>)}</div>
           <ol className="meds">{rx.medicines.map((m, i) => <li key={m.id} className="med">

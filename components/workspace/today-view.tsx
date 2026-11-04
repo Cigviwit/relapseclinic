@@ -6,6 +6,7 @@ import { unresolvedVisits } from '@/lib/unresolved';
 import { dayBuckets } from '@/lib/schedule';
 import { Avatar, Chips, Empty, Status } from '../kit';
 import { WaitlistCard } from './front-desk-cards';
+import { LabDueCard, RecallsDueCard } from './dental-cards';
 import type { Workspace } from './types';
 
 function greeting(time: string) { const h = Number(time.slice(0, 2)); return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening'; }
@@ -112,6 +113,8 @@ export default function TodayView({ w }: { w: Workspace }) {
         </section> : <section className="card next-card next-empty"><p className="eyebrow">Up next</p><strong>Queue is clear</strong><small>No more patients waiting today.</small></section>}
 
         <WaitlistCard w={w} />
+        {w.can.readRecords && <RecallsDueCard w={w} />}
+        {w.can.readRecords && <LabDueCard w={w} />}
         <section className="card">
           <div className="card-head card-head-row"><h2>Tomorrow</h2><button className="btn-link" onClick={() => w.go('schedule')}>Schedule<ChevronRight size={14} /></button></div>
           {tomorrow.length ? <ul className="mini-list">{tomorrow.slice(0, 6).map(a => <li key={a.id}><button onClick={() => w.openAppointment(a)}><span className="mini-time">{clockLabel(a.time)}</span><span>{w.patient(a.patientId)?.name}</span></button></li>)}

@@ -17,6 +17,7 @@ export default function BillEditor({ w, options, onSaved }: { w: Workspace; opti
   const [doctorId, setDoctorId] = useState(options.doctorId || (w.doctorFilter !== 'all' ? w.doctorFilter : w.clinic.doctors[0]?.id) || '');
   const [rows, setRows] = useState<Row[]>(() => {
     const match = options.reason ? fees.find(f => f.name.toLowerCase() === options.reason!.toLowerCase()) : undefined;
+    if (options.price) return [fromFee(options.reason || '', rupeesText(options.price), match?.taxRate)];
     if (match) return [fromFee(match.name, rupeesText(match.price), match.taxRate)];
     return [fromFee(options.reason || '')];
   });

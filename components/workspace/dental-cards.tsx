@@ -26,7 +26,7 @@ function PlanEditor({ w, patientId, onDone }: { w: Workspace; patientId: string;
   const preset = specialties[padFor(w.clinic.rxPad).specialty];
   const options = useMemo(() => [...new Set([...preset.plans, ...preset.procedures, ...(w.clinic.billing?.fees || []).map(f => f.name)])], [preset, w.clinic.billing?.fees]);
   const edit = (id: string, patch: Partial<Row>) => setRows(list => list.map(r => r.id === id ? { ...r, ...patch } : r));
-  const useFee = (row: Row, name: string) => { const fee = w.clinic.billing?.fees.find(f => f.name === name); edit(row.id, { procedure: name, ...(fee && !row.estimate ? { estimate: rupeesText(fee.price) } : {}) }); };
+  const chooseProcedure = (row: Row, name: string) => { const fee = w.clinic.billing?.fees.find(f => f.name === name); edit(row.id, { procedure: name, ...(fee && !row.estimate ? { estimate: rupeesText(fee.price) } : {}) }); };
   async function save() {
     try {
       const items: PlanItem[] = rows.filter(r => r.procedure.trim()).map(r => ({ id: r.id, procedure: r.procedure.trim(), teeth: parseTeeth(r.teeth), estimate: r.estimate.trim() ? parseRupees(r.estimate) : 0, status: 'planned' }));
@@ -44,7 +44,7 @@ function PlanEditor({ w, patientId, onDone }: { w: Workspace; patientId: string;
     </div>
     <datalist id="plan-procedures">{options.map(o => <option key={o} value={o} />)}</datalist>
     {rows.map(r => <div className="plan-row" key={r.id}>
-      <Field label="Treatment"><input className="input" list="plan-procedures" maxLength={150} value={r.procedure} onChange={e => useFee(r, e.target.value)} /></Field>
+      <Field label="Treatment"><input className="input" list="plan-procedures" maxLength={150} value={r.procedure} onChange={e => chooseProcedure(r, e.target.value)} /></Field>
       <Field label="Teeth"><input className="input" inputMode="numeric" placeholder="36, 37" value={r.teeth} onChange={e => edit(r.id, { teeth: e.target.value })} /></Field>
       <Field label="Estimate (₹)"><input className="input" inputMode="decimal" value={r.estimate} onChange={e => edit(r.id, { estimate: e.target.value })} /></Field>
       <button type="button" className="btn-icon" aria-label="Remove treatment" disabled={rows.length === 1} onClick={() => setRows(list => list.filter(x => x.id !== r.id))}><Trash2 size={15} /></button>

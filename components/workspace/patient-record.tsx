@@ -126,10 +126,10 @@ export function PatientRecordForm({ w, patientId, live, onDone }: { w: Workspace
 
 const vitalFields: { key: keyof Vitals; label: string; placeholder: string; max: number }[] = [{ key: 'bp', label: 'BP', placeholder: '120/80', max: 9 }, { key: 'pulse', label: 'Pulse', placeholder: '/min', max: 3 }, { key: 'temp', label: 'Temp °F', placeholder: '98.6', max: 5 }, { key: 'weight', label: 'Weight kg', placeholder: '', max: 5 }, { key: 'spo2', label: 'SpO₂ %', placeholder: '', max: 3 }];
 
-export function NoteComposer({ w, patientId, correcting, onDone }: { w: Workspace; patientId: string; correcting?: PatientNote; onDone: () => void }) {
+export function NoteComposer({ w, patientId, correcting, appointment, onDone }: { w: Workspace; patientId: string; correcting?: PatientNote; appointment?: { id: string; date: string; doctorId: string }; onDone: () => void }) {
   const [text, setText] = useState(correcting?.text || '');
-  const [date, setDate] = useState(correcting?.date || w.now.date);
-  const [doctorId, setDoctorId] = useState(correcting?.doctorId || (w.doctorFilter !== 'all' ? w.doctorFilter : w.clinic.doctors[0]?.id || ''));
+  const [date, setDate] = useState(correcting?.date || appointment?.date || w.now.date);
+  const [doctorId, setDoctorId] = useState(correcting?.doctorId || appointment?.doctorId || w.account.doctorId || (w.doctorFilter !== 'all' ? w.doctorFilter : w.clinic.doctors[0]?.id || ''));
   const [vitals, setVitals] = useState<Vitals>(correcting?.vitals || blankVitals());
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -137,7 +137,7 @@ export function NoteComposer({ w, patientId, correcting, onDone }: { w: Workspac
     e.preventDefault();
     if (busy) return;
     try {
-      const note = prepareNote({ id: crypto.randomUUID(), clinicId: w.clinic.id, patientId, doctorId, date, text, vitals, corrects: correcting?.id, createdAt: '', createdBy: '', createdByName: w.account.name }, w.now.date);
+      const note = prepareNote({ id: crypto.randomUUID(), clinicId: w.clinic.id, patientId, doctorId, date, text, vitals, corrects: correcting?.id, appointmentId: correcting?.appointmentId || appointment?.id, createdAt: '', createdBy: '', createdByName: w.account.name }, w.now.date);
       setBusy(true);
       await w.repo.addPatientNote(w.account, note);
       toast.success(correcting ? 'Correction saved' : 'Note saved');

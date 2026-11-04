@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { BarChart3, CalendarDays, CalendarPlus, FileText, Home, IndianRupee, LogOut, MessageCircle, Search, Settings, Users } from 'lucide-react';
+import { BarChart3, CalendarDays, CalendarPlus, FileText, FlaskConical, Home, IndianRupee, LogOut, MessageCircle, Search, Settings, Users } from 'lucide-react';
 import { Toaster, toast } from 'sonner';
 import { type Appointment, type Clinic, type Database, type Patient, clockLabel, initials, validateAppointment, zonedNow } from '@/lib/clinic';
 import { firestoreRepository, type ClinicData, type DoctorDigestDelivery, type MessageDelivery, type Repository } from '@/lib/firestore-repository';
@@ -8,6 +8,8 @@ import { historyStart, mergeById } from '@/lib/data-window';
 import { permissionsFor, roleLabel } from '@/lib/permissions';
 import { IdleLock } from './idle-lock';
 import type { WaitlistEntry } from '@/lib/front-desk';
+import { emptyCatalog, type Catalog } from '@/lib/catalog';
+import type { LabCase, Recall } from '@/lib/dental';
 import { authService, getAccount, type Account } from '@/lib/auth-service';
 import { blankPrescription, currentPrescriptions, repeatPrescription, withDefaults, type Prescription } from '@/lib/prescription';
 import { unresolvedVisits } from '@/lib/unresolved';
@@ -31,6 +33,7 @@ const SettingsView = lazy(() => import('@/components/workspace/settings-view'));
 const PrescriptionBuilder = lazy(() => import('@/components/prescription/prescription-builder'));
 const CommandPalette = lazy(() => import('@/components/workspace/command-palette'));
 const AdminCreateClinic = lazy(() => import('@/components/auth/admin-create-clinic'));
+const LabView = lazy(() => import('@/components/workspace/dental-cards').then(m => ({ default: m.LabView })));
 const RecordsViews = { Prescriptions: lazy(() => import('@/components/workspace/records-views').then(m => ({ default: m.PrescriptionsView }))), Messages: lazy(() => import('@/components/workspace/records-views').then(m => ({ default: m.MessagesView }))) };
 
 const pages: { id: Page; label: string; icon: React.ReactNode }[] = [
@@ -39,6 +42,7 @@ const pages: { id: Page; label: string; icon: React.ReactNode }[] = [
   { id: 'patients', label: 'Patients', icon: <Users size={19} /> },
   { id: 'billing', label: 'Billing', icon: <IndianRupee size={19} /> },
   { id: 'rx', label: 'Prescriptions', icon: <FileText size={19} /> },
+  { id: 'lab', label: 'Lab work', icon: <FlaskConical size={19} /> },
   { id: 'messages', label: 'Messages', icon: <MessageCircle size={19} /> },
   { id: 'impact', label: 'Impact', icon: <BarChart3 size={19} /> },
   { id: 'settings', label: 'Settings', icon: <Settings size={19} /> },
@@ -80,6 +84,9 @@ export default function ClinicApp() {
   const [patientModal, setPatientModal] = useState<{ item?: Patient } | null>(null);
   const [walkIn, setWalkIn] = useState<{ patientId?: string } | null>(null);
   const [waitlist, setWaitlist] = useState<WaitlistEntry[]>([]);
+  const [savedCatalog, setCatalog] = useState<Catalog | null>(null);
+  const [recalls, setRecalls] = useState<Recall[]>([]);
+  const [openLabs, setOpenLabs] = useState<LabCase[]>([]);
   const [clinicModal, setClinicModal] = useState(false);
   const [detail, setDetail] = useState<Appointment | null>(null);
   const [rxDraft, setRxDraft] = useState<Prescription | null>(null);
@@ -112,7 +119,7 @@ export default function ClinicApp() {
   const can = useMemo(() => permissionsFor(account?.role || 'billing'), [account?.role]);
   const rxOn = clinic?.prescriptionsEnabled === true && can.readRx;
   const billingOn = clinic?.billingEnabled === true && can.readBilling;
-  const navPages = pages.filter(p => (p.id !== 'rx' || rxOn) && (p.id !== 'billing' || billingOn));
+  const navPages = pages.filter(p => (p.id !== 'rx' || rxOn) && (p.id !== 'billing' || billingOn) && (p.id !== 'lab' || can.readRecords));
   const page = (navPages.some(p => p.id === hashPage) ? hashPage : 'today') as Page;
   // Fixed for the session, so the live listeners are not rebuilt as the clock ticks.
   const from = useMemo(() => clinicId && clinic ? historyStart(zonedNow(clinic.timezone).date) : '', [clinicId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -135,6 +142,12 @@ export default function ClinicApp() {
     if (!clinicId || !from || !rxOn) { setPrescriptions([]); return; }
     return repo.subscribePrescriptions(clinicId, from, setPrescriptions, e => console.warn('Prescriptions unavailable:', e.message));
   }, [repo, clinicId, from, rxOn]);
+  useEffect(() => {
+    if (!clinicId || !can.readRecords) { setCatalog(null); setRecalls([]); setOpenLabs([]); return; }
+    const onError = (e: Error) => console.warn('Clinical lists unavailable:', e.message);
+    const unsubs = [repo.subscribeCatalog(clinicId, setCatalog, onError), repo.subscribeDueRecalls(clinicId, setRecalls, onError), repo.subscribeOpenLabCases(clinicId, setOpenLabs, onError)];
+    return () => unsubs.forEach(u => u());
+  }, [repo, clinicId, can.readRecords]);
   useEffect(() => {
     if (!clinicId || !billingOn) { setBills([]); setLedger([]); setClosings([]); return; }
     const onError = (e: Error) => console.warn('Billing unavailable:', e.message);
@@ -232,6 +245,8 @@ export default function ClinicApp() {
     await repo.bookAppointment(a);
     toast.success(`Booked ${scoped!.byId.get(a.patientId)?.name || ''} · ${clockLabel(a.time)}`);
     if (booking?.waitlistId) repo.setWaitlistStatus(booking.waitlistId, 'booked').catch(e => toast.error((e as Error).message));
+    const recall = booking?.recallId ? recalls.find(r => r.id === booking.recallId) : undefined;
+    if (recall) repo.saveRecall({ ...recall, status: 'booked' }).catch(e => toast.error((e as Error).message));
     setBooking(null); setDetail(null);
   }
   function savePatient(p: Patient) {
@@ -241,7 +256,7 @@ export default function ClinicApp() {
   }
 
   const w: Workspace = {
-    account, db, clinic, repo, now, doctorFilter, setDoctorFilter, can, rxOn, loadRange, waitlist,
+    account, db, clinic, repo, now, doctorFilter, setDoctorFilter, can, rxOn, loadRange, waitlist, catalog: savedCatalog || emptyCatalog(clinic.id), recalls, openLabs,
     patients: scoped.patients, appointments: scoped.appointments, deliveries: scoped.deliveries, digests: scoped.digests, prescriptions: scoped.prescriptions,
     patient: id => scoped.byId.get(id), doctor: id => scoped.doctors.get(id), doctorName: id => scoped.doctors.get(id)?.name || 'Doctor',
     go, book: o => { setDetail(null); setBooking(o || {}); }, openAppointment: setDetail,
@@ -298,6 +313,7 @@ export default function ClinicApp() {
           {page === 'patients' && <PatientsView w={w} selectedId={patientId && scoped.byId.has(patientId) ? patientId : null} select={id => go('patients', id || undefined)} />}
           {page === 'billing' && <BillingView w={w} />}
           {page === 'rx' && <RecordsViews.Prescriptions w={w} />}
+          {page === 'lab' && <LabView w={w} />}
           {page === 'messages' && <RecordsViews.Messages w={w} />}
           {page === 'impact' && <ImpactView w={w} />}
           {page === 'settings' && <SettingsView w={w} demo={demo} onCreateClinic={() => setClinicModal(true)} />}

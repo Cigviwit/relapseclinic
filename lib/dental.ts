@@ -7,7 +7,7 @@ export type PlanItem = { id: string; procedure: string; teeth: number[]; estimat
 export type TreatmentPlan = { id: string; clinicId: string; patientId: string; doctorId: string; title: string; items: PlanItem[]; status: 'active' | 'closed'; createdAt: string; version: number; updatedBy?: string };
 export const planItemStatuses: { value: PlanItemStatus; label: string }[] = [{ value: 'planned', label: 'Planned' }, { value: 'in_progress', label: 'In progress' }, { value: 'done', label: 'Done' }, { value: 'declined', label: 'Declined' }];
 
-const allTeeth = new Set([...permanentTeeth, ...primaryTeeth].flat(2));
+const allTeeth = new Set([...permanentTeeth.upper, ...permanentTeeth.lower, ...primaryTeeth.upper, ...primaryTeeth.lower]);
 /** "36, 37" becomes [36, 37]. Numbers that are not real teeth are refused, because a wrong tooth on a plan is a clinical error. */
 export function parseTeeth(text: string): number[] {
   const parts = text.split(/[\s,]+/).filter(Boolean);

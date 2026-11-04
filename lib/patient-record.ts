@@ -14,7 +14,7 @@ export type PatientRecord = {
   version: number; updatedAt: string; updatedBy: string;
 };
 /** Append-only: a mistake is fixed by a new note whose `corrects` names the old one. */
-export type PatientNote = { id: string; clinicId: string; patientId: string; doctorId: string; date: string; text: string; vitals?: Vitals; corrects?: string; createdAt: string; createdBy: string; createdByName?: string };
+export type PatientNote = { id: string; clinicId: string; patientId: string; doctorId: string; date: string; text: string; vitals?: Vitals; corrects?: string; appointmentId?: string; createdAt: string; createdBy: string; createdByName?: string };
 export type RecordChange = { field: string; from: unknown; to: unknown };
 /** Written only by the recordPatientRecordChange function. */
 export type RecordAudit = { id: string; clinicId: string; patientId: string; version: number; changes: RecordChange[]; changedAt: string; changedBy: string };
@@ -58,12 +58,20 @@ export function prepareNote(n: PatientNote, today: string): PatientNote {
   if (!n.text.trim() && !hasVitals(n.vitals)) throw new Error('Write the note or enter a vital sign.');
   if (!realDate(n.date) || n.date > today) throw new Error('Choose a visit date that is not in the future.');
   if (!n.doctorId) throw new Error('Choose the doctor for this note.');
-  const { vitals, corrects, ...rest } = n;
-  return { ...rest, text: n.text.trim(), ...(hasVitals(vitals) ? { vitals } : {}), ...(corrects ? { corrects } : {}) };
+  const { vitals, corrects, appointmentId, ...rest } = n;
+  return { ...rest, text: n.text.trim(), ...(hasVitals(vitals) ? { vitals } : {}), ...(corrects ? { corrects } : {}), ...(appointmentId ? { appointmentId } : {}) };
 }
 
 /** The notes still in force: a note that has been corrected is left out. */
 export const currentNotes = (notes: PatientNote[]) => { const replaced = new Set(notes.flatMap(n => n.corrects ? [n.corrects] : [])); return notes.filter(n => !replaced.has(n.id)); };
+/**
+ * Everything recorded for one visit. Notes from before visits were linked, or written from the patient's page,
+ * count if they share the visit's date and doctor.
+ */
+export function visitNotes(appointment: { id: string; date: string; doctorId: string }, notes: PatientNote[]) {
+  return currentNotes(notes).filter(n => n.appointmentId === appointment.id || (!n.appointmentId && n.date === appointment.date && n.doctorId === appointment.doctorId));
+}
+
 /** What a note replaced, most recent first. */
 export function earlierVersions(note: PatientNote, notes: PatientNote[]) {
   const out: PatientNote[] = []; let at = note.corrects;

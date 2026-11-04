@@ -99,7 +99,8 @@ service cloud.firestore {
     // sentAt is written by the sendPrescription function only.
     function validPrescription(data, id) {
       return data.keys().hasAll(['id','clinicId','patientId','doctorId','date','medicines','createdAt','status','updatedBy','updatedAt'])
-        && data.keys().hasOnly(['id','clinicId','patientId','doctorId','appointmentId','date','age','sex','specialty','vitals','history','complaints','teeth','findings','diagnosis','procedures','plan','medicines','advice','tests','followUp','createdAt','status','amends','finalizedAt','finalizedBy','mergedFrom','updatedBy','updatedAt'])
+        && data.keys().hasOnly(['id','clinicId','patientId','doctorId','appointmentId','date','age','sex','specialty','vitals','history','complaints','teeth','findings','diagnosis','procedures','plan','medicines','advice','tests','followUp','createdAt','status','amends','finalizedAt','finalizedBy','allergyOverride','mergedFrom','updatedBy','updatedAt'])
+        && (!('allergyOverride' in data) || (data.allergyOverride is list && data.allergyOverride.size() <= 40))
         && (!('teeth' in data) || (data.teeth is list && data.teeth.size() <= 52))
         && data.id == id && text(data.clinicId, 100) && text(data.patientId, 100)
         && text(data.doctorId, 100) && isDate(data.date) && text(data.createdAt, 40)
@@ -151,7 +152,8 @@ service cloud.firestore {
     }
     function validPatientNote(data, id) {
       return data.keys().hasAll(['id','clinicId','patientId','doctorId','date','text','createdAt','createdBy','createdByName'])
-        && data.keys().hasOnly(['id','clinicId','patientId','doctorId','date','text','vitals','corrects','createdAt','createdBy','createdByName'])
+        && data.keys().hasOnly(['id','clinicId','patientId','doctorId','date','text','vitals','corrects','appointmentId','mergedFrom','createdAt','createdBy','createdByName'])
+        && optionalText(data, 'appointmentId', 100)
         && data.id == id && text(data.clinicId, 100) && text(data.patientId, 100) && text(data.doctorId, 100)
         && isDate(data.date)
         && data.text is string && data.text.size() <= 5000
@@ -271,6 +273,61 @@ service cloud.firestore {
     match /patientFiles/{id} {
       allow get, list: if canReadClinical(resource.data.clinicId);
       allow create, update, delete: if false;
+    }
+    // The clinic's medicine list and prescription templates: one document per clinic, kept by those who prescribe.
+    match /clinicCatalogs/{clinicId} {
+      allow get: if canReadClinical(clinicId);
+      allow create, update: if hasRole(clinicId, ['owner','doctor']) && request.resource.data.keys().hasOnly(['id','clinicId','medicines','templates','updatedBy','updatedAt'])
+        && request.resource.data.id == clinicId && request.resource.data.clinicId == clinicId
+        && request.resource.data.medicines is list && request.resource.data.medicines.size() <= 500
+        && request.resource.data.templates is list && request.resource.data.templates.size() <= 100
+        && stampedNow(request.resource.data);
+      allow delete: if false;
+    }
+    function validPlan(data, id) {
+      return data.keys().hasAll(['id','clinicId','patientId','doctorId','title','items','status','createdAt','version','updatedBy','updatedAt'])
+        && data.keys().hasOnly(['id','clinicId','patientId','doctorId','title','items','status','createdAt','version','mergedFrom','updatedBy','updatedAt'])
+        && data.id == id && text(data.doctorId, 100) && text(data.title, 100) && text(data.createdAt, 40)
+        && data.items is list && data.items.size() > 0 && data.items.size() <= 60
+        && data.status in ['active','closed'] && data.version is int && stampedNow(data);
+    }
+    // Treatment plans: doctors and owners decide treatment; front desk can read them to explain costs.
+    match /treatmentPlans/{id} {
+      allow get, list: if canReadClinical(resource.data.clinicId);
+      allow create: if hasRole(request.resource.data.clinicId, ['owner','doctor']) && validPlan(request.resource.data, id)
+        && request.resource.data.version == 1 && patientInClinic(request.resource.data.patientId, request.resource.data.clinicId);
+      allow update: if hasRole(resource.data.clinicId, ['owner','doctor']) && sameClinic() && validPlan(request.resource.data, id)
+        && request.resource.data.patientId == resource.data.patientId && request.resource.data.version == resource.data.version + 1;
+      allow delete: if false;
+    }
+    function validLabCase(data, id) {
+      return data.keys().hasAll(['id','clinicId','patientId','doctorId','labName','work','teeth','sentOn','dueOn','status','createdAt','updatedBy','updatedAt'])
+        && data.keys().hasOnly(['id','clinicId','patientId','doctorId','labName','work','teeth','shade','sentOn','dueOn','status','note','createdAt','mergedFrom','updatedBy','updatedAt'])
+        && data.id == id && text(data.labName, 100) && text(data.work, 100) && text(data.createdAt, 40)
+        && data.teeth is list && data.teeth.size() <= 52 && isDate(data.sentOn) && isDate(data.dueOn) && data.dueOn >= data.sentOn
+        && data.status in ['sent','received','fitted','redo','cancelled'] && upTo(data, 'shade', 20) && upTo(data, 'note', 300) && stampedNow(data);
+    }
+    match /labCases/{id} {
+      allow get, list: if canReadClinical(resource.data.clinicId);
+      allow create: if hasRole(request.resource.data.clinicId, ['owner','doctor','frontdesk']) && validLabCase(request.resource.data, id)
+        && request.resource.data.status == 'sent' && patientInClinic(request.resource.data.patientId, request.resource.data.clinicId);
+      allow update: if hasRole(resource.data.clinicId, ['owner','doctor','frontdesk']) && sameClinic() && validLabCase(request.resource.data, id)
+        && request.resource.data.patientId == resource.data.patientId;
+      allow delete: if false;
+    }
+    function validRecall(data, id) {
+      return data.keys().hasAll(['id','clinicId','patientId','due','reason','status','createdAt','updatedBy','updatedAt'])
+        && data.keys().hasOnly(['id','clinicId','patientId','due','reason','status','createdAt','mergedFrom','updatedBy','updatedAt'])
+        && data.id == id && isDate(data.due) && text(data.reason, 100) && text(data.createdAt, 40)
+        && data.status in ['due','booked','dismissed'] && stampedNow(data);
+    }
+    match /recalls/{id} {
+      allow get, list: if canReadClinical(resource.data.clinicId);
+      allow create: if hasRole(request.resource.data.clinicId, ['owner','doctor','frontdesk']) && validRecall(request.resource.data, id)
+        && request.resource.data.status == 'due' && patientInClinic(request.resource.data.patientId, request.resource.data.clinicId);
+      allow update: if hasRole(resource.data.clinicId, ['owner','doctor','frontdesk']) && sameClinic() && validRecall(request.resource.data, id)
+        && request.resource.data.patientId == resource.data.patientId;
+      allow delete: if false;
     }
     match /auditLog/{id} {
       allow get, list: if isAdmin() || hasRole(resource.data.clinicId, ['owner']);
