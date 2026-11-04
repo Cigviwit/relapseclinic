@@ -5,6 +5,7 @@ import { clockLabel, dateLabel, reminderMessage, reminderStatus } from '@/lib/cl
 import { patientLanguageLabel } from '@/lib/patient-language';
 import { searchPatients } from '@/lib/patient-search';
 import { Avatar, Empty, Status } from '../kit';
+import { PatientBilling } from '../billing/patient-billing';
 import type { Workspace } from './types';
 
 export default function PatientsView({ w, selectedId, select }: { w: Workspace; selectedId: string | null; select: (id: string | null) => void }) {
@@ -70,6 +71,7 @@ function PatientDetail({ w, id, onBack }: { w: Workspace; id: string; onBack: ()
         {past.length ? past.map(a => <button key={a.id} className="visit" onClick={() => w.openAppointment(a)}><span className="visit-date"><strong>{dateLabel(a.date, { day: 'numeric', month: 'short' })}</strong><small>{a.date.slice(0, 4)}</small></span><span><strong>{a.reason}</strong><small>{w.doctorName(a.doctorId)} · {clockLabel(a.time)}</small></span><Status status={a.status} /></button>) : <p className="muted">No past visits.</p>}
       </section>
       <section>
+        {w.billingOn && <PatientBilling w={w} patientId={id} />}
         {w.clinic.prescriptionsEnabled && <><h2 className="sec-title">Prescriptions</h2>
         {rxs.length ? rxs.map(rx => <button key={rx.id} className="rx-card" onClick={() => w.writeRx({ item: rx })}>
           <div className="rx-card-top"><strong>{dateLabel(rx.date, { day: 'numeric', month: 'short', year: 'numeric' })}</strong>{rx.sentAt ? <Status status="accepted">Sent</Status> : <Status status="scheduled">Saved</Status>}</div>

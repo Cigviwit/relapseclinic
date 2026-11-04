@@ -2,6 +2,7 @@ import { seed, addDays, type Database } from './clinic';
 import type { Account } from './auth-service';
 import type { Repository, MessageDelivery, DoctorDigestDelivery } from './firestore-repository';
 import type { Prescription } from './prescription';
+import { closingId, type Bill, type DayClosing, type LedgerEntry } from './billing';
 
 /**
  * In-memory data for trying the workspace on localhost without Firebase.
@@ -45,7 +46,20 @@ function demoData() {
       { id: 'm2', name: 'Tab Aceclofenac + Paracetamol', frequency: '1-0-1', timing: 'after', days: '3', notes: 'Only if there is pain' },
     ], advice: 'Avoid chewing on the treated side\nComplete the full course of antibiotics', tests: 'IOPA 36', followUp: addDays(date, 7), createdAt: new Date().toISOString(), sentAt: new Date().toISOString(),
   }];
-  return { db, deliveries, prescriptions, digests: [] as DoctorDigestDelivery[] };
+  const stamp = new Date().toISOString();
+  Object.assign(dental, { billingEnabled: true, billing: { upiId: 'greenleafdental@okhdfc', upiName: 'Greenleaf Dental Care', fees: [
+    { id: 'f1', name: 'Consultation', price: 50000 }, { id: 'f2', name: 'Scaling & polishing', price: 150000 }, { id: 'f3', name: 'Filling', price: 120000 },
+    { id: 'f4', name: 'Extraction', price: 100000 }, { id: 'f5', name: 'Root canal – per sitting', price: 350000 }, { id: 'f6', name: 'IOPA X-ray', price: 20000 },
+  ] } });
+  const demoBill = (id: string, number: string, patientId: string, day: string, appointmentId: string | undefined, description: string, price: number): Bill => ({ id, number, clinicId: 'greenleaf', patientId, doctorId: 'priya', date: day, ...(appointmentId ? { appointmentId } : {}), lines: [{ id: id + 'l', description, qty: 1, unitPrice: price, taxRate: 0 }], subtotal: price, discount: 0, tax: 0, total: price, status: 'active', createdBy: 'Asha', createdAt: stamp });
+  const demoPay = (id: string, patientId: string, day: string, billId: string | undefined, method: LedgerEntry['method'], amount: number): LedgerEntry => ({ id, clinicId: 'greenleaf', patientId, kind: 'payment', method, amount, date: day, ...(billId ? { billId } : {}), collectedBy: 'Asha', createdAt: stamp });
+  const bills: Bill[] = [
+    demoBill('b1', '2026-27/00001', 'p0', date, 'a0', 'Consultation', 50000),
+    demoBill('b2', '2026-27/00002', 'p1', date, 'a1', 'Root canal – per sitting', 350000),
+    demoBill('b3', '2026-27/00003', 'p5', addDays(date, -6), undefined, 'Extraction', 100000),
+  ];
+  const ledger: LedgerEntry[] = [demoPay('e1', 'p0', date, 'b1', 'upi', 50000), demoPay('e2', 'p1', date, 'b2', 'cash', 200000), demoPay('e3', 'p2', addDays(date, -2), undefined, 'upi', 500000)];
+  return { db, deliveries, prescriptions, digests: [] as DoctorDigestDelivery[], bills, ledger, closings: [] as DayClosing[] };
 }
 
 export function createDemoRepository(): Repository {
@@ -55,6 +69,8 @@ export function createDemoRepository(): Repository {
   const watch = (fn: () => void) => { listeners.add(fn); fn(); return () => { listeners.delete(fn); }; };
   const upsert = <T extends { id: string }>(list: T[], item: T) => [...list.filter(x => x.id !== item.id), item];
   const later = () => new Promise<void>(resolve => setTimeout(() => { emit(); resolve(); }, 120));
+  const isClosed = (clinicId: string, date: string) => state.closings.some(c => c.id === closingId(clinicId, date));
+  const closedMessage = 'That day is already closed.';
   return {
     subscribeDatabase: (_a, onUpdate) => watch(() => onUpdate({ ...state.db } as Database)),
     subscribeDeliveries: (_a, onUpdate) => watch(() => onUpdate(state.deliveries)),
@@ -65,6 +81,26 @@ export function createDemoRepository(): Repository {
     savePatient: async p => { state.db.patients = upsert(state.db.patients, p); return later(); },
     saveAppointment: async a => { state.db.appointments = upsert(state.db.appointments, a); return later(); },
     savePrescription: async rx => { state.prescriptions = upsert(state.prescriptions, rx); return later(); },
+    subscribeBills: (_a, onUpdate) => watch(() => onUpdate(state.bills)),
+    subscribeLedger: (_a, onUpdate) => watch(() => onUpdate(state.ledger)),
+    subscribeDayClosings: (_a, onUpdate) => watch(() => onUpdate(state.closings)),
+    setBillingEnabled: async (id, billingEnabled) => { state.db.clinics = state.db.clinics.map(x => x.id === id ? { ...x, billingEnabled } : x); return later(); },
+    saveBill: async (_a, b) => {
+      if (isClosed(b.clinicId, b.date)) throw new Error(closedMessage);
+      state.bills = upsert(state.bills, { ...b, number: `2026-27/${String(state.bills.length + 1).padStart(5, '0')}` });
+      return later();
+    },
+    voidBill: async (_a, id, change) => {
+      if (state.bills.some(b => b.id === id && isClosed(b.clinicId, change.voidedOn))) throw new Error(closedMessage);
+      state.bills = state.bills.map(b => b.id === id ? { ...b, ...change, status: 'void' as const } : b);
+      return later();
+    },
+    addLedgerEntry: async (_a, e) => {
+      if (isClosed(e.clinicId, e.date)) throw new Error(closedMessage);
+      state.ledger = [...state.ledger, { ...e, createdAt: new Date().toISOString() }];
+      return later();
+    },
+    closeDay: async (_a, c) => { state.closings = upsert(state.closings, c); return later(); },
     sendPrescription: async (id, pdf) => {
       const rx = state.prescriptions.find(p => p.id === id)!;
       console.info(`Demo: would send a ${Math.round(pdf.length * 0.75 / 1024)} KB prescription PDF via MSG91`);

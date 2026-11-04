@@ -1,8 +1,9 @@
-import { collection, doc, onSnapshot, query, setDoc, updateDoc, where } from "firebase/firestore";
+import { collection, doc, onSnapshot, query, serverTimestamp, setDoc, updateDoc, where, type DocumentData, type QuerySnapshot } from "firebase/firestore";
 import { firestore } from "./firebase";
 import { type Account } from "./auth-service";
 import { type Database, type Clinic, type Patient, type Appointment, type Reminder } from "./clinic";
 import { type Prescription } from "./prescription";
+import { type Bill, type DayClosing, type LedgerEntry } from "./billing";
 
 type Unsubscribe = () => void;
 export type Repository = {
@@ -18,8 +19,23 @@ export type Repository = {
   savePrescription(prescription: Prescription): Promise<void>;
   /** Sends the PDF through the clinic's MSG91 WhatsApp number. */
   sendPrescription(prescriptionId: string, pdfBase64: string, fileName: string): Promise<SendResult>;
+  subscribeBills(account: Account, onUpdate: (records: Bill[]) => void, onError: (error: Error) => void): Unsubscribe;
+  subscribeLedger(account: Account, onUpdate: (records: LedgerEntry[]) => void, onError: (error: Error) => void): Unsubscribe;
+  subscribeDayClosings(account: Account, onUpdate: (records: DayClosing[]) => void, onError: (error: Error) => void): Unsubscribe;
+  /** Administrator only; firestore.rules rejects it from clinic accounts. */
+  setBillingEnabled(clinicId: string, enabled: boolean): Promise<void>;
+  saveBill(account: Account, bill: Bill): Promise<void>;
+  voidBill(account: Account, billId: string, change: { voidReason: string; voidedOn: string; voidedBy: string }): Promise<void>;
+  addLedgerEntry(account: Account, entry: LedgerEntry): Promise<void>;
+  closeDay(account: Account, closing: DayClosing): Promise<void>;
 };
 export type SendResult = { status: 'accepted' | 'failed' | 'unknown'; error?: string };
+
+/** Server timestamps become ISO strings here so the rest of the app only sees strings. */
+const iso = (value: unknown) => (value as { toDate?: () => Date } | null)?.toDate?.().toISOString() ?? "";
+const rows = (snap: QuerySnapshot<DocumentData>) => snap.docs.map(d => d.data({ serverTimestamps: "estimate" }));
+/** Firestore refuses undefined fields; optional billing fields are simply left out. */
+const defined = <T extends object>(value: T) => Object.fromEntries(Object.entries(value).filter(([, v]) => v !== undefined));
 
 /** Admin sees every clinic's records; a clinic account only its own. */
 const scoped = (account: Account, name: string) => account.role === "admin"
@@ -34,6 +50,14 @@ export const firestoreRepository: Repository = {
   subscribeDoctorDigests: (account, onUpdate, onError) => subscribeCollection(account, "doctorDigestDeliveries", onUpdate, onError),
   subscribeDeliveries: (account, onUpdate, onError) => subscribeCollection(account, "messageDeliveries", onUpdate, onError),
   subscribePrescriptions: (account, onUpdate, onError) => subscribeCollection(account, "prescriptions", onUpdate, onError),
+  subscribeBills: (account, onUpdate, onError) => onSnapshot(scoped(account, "bills"), snap => onUpdate(rows(snap).map(row => ({ ...row, createdAt: iso(row.createdAt) }) as Bill)), onError),
+  subscribeLedger: (account, onUpdate, onError) => onSnapshot(scoped(account, "ledgerEntries"), snap => onUpdate(rows(snap).map(row => ({ ...row, createdAt: iso(row.createdAt) }) as LedgerEntry)), onError),
+  subscribeDayClosings: (account, onUpdate, onError) => onSnapshot(scoped(account, "dayClosings"), snap => onUpdate(rows(snap).map(row => ({ ...row, closedAt: iso(row.closedAt) }) as DayClosing)), onError),
+  setBillingEnabled: (clinicId, enabled) => updateDoc(doc(firestore, "clinics", clinicId), { billingEnabled: enabled }),
+  saveBill: (account, bill) => setDoc(doc(firestore, "bills", bill.id), { ...defined(bill), createdAt: serverTimestamp(), createdByUid: account.user.uid }),
+  voidBill: (account, billId, change) => updateDoc(doc(firestore, "bills", billId), { ...change, status: "void", voidedAt: serverTimestamp(), voidedByUid: account.user.uid }),
+  addLedgerEntry: (account, entry) => setDoc(doc(firestore, "ledgerEntries", entry.id), { ...defined(entry), createdAt: serverTimestamp(), createdByUid: account.user.uid }),
+  closeDay: (account, closing) => setDoc(doc(firestore, "dayClosings", closing.id), { ...defined(closing), closedAt: serverTimestamp(), closedByUid: account.user.uid }),
   saveClinic: (clinic: Clinic) => setDoc(doc(firestore, "clinics", clinic.id), clinic),
   setPrescriptionsEnabled: (clinicId, enabled) => updateDoc(doc(firestore, "clinics", clinicId), { prescriptionsEnabled: enabled }),
   savePatient: (patient: Patient) => setDoc(doc(firestore, "patients", patient.id), patient),

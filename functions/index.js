@@ -1,11 +1,12 @@
 const { initializeApp } = require('firebase-admin/app');
 const { getFirestore, FieldValue } = require('firebase-admin/firestore');
-const { onDocumentWritten } = require('firebase-functions/v2/firestore');
+const { onDocumentCreated, onDocumentWritten } = require('firebase-functions/v2/firestore');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
 const { onCall, onRequest, HttpsError } = require('firebase-functions/v2/https');
 const { randomBytes, timingSafeEqual } = require('node:crypto');
 const { defineSecret } = require('firebase-functions/params');
 const { logger } = require('firebase-functions');
+const { financialYear, billNumber } = require('./bill-number');
 const { addDays, localNow, slotFor, missedDueNow, deliveryId, appointmentMessage, msg91Payload, prescriptionValues, prescriptionFileName, prescriptionDeliveryId, hasReplacementAppointment, digestDue, doctorDigest, doctorDigestId, manualDoctorDigestId } = require('./reminder-logic');
 
 initializeApp();
@@ -385,6 +386,22 @@ exports.sendPrescription = onCall({
     logger.error('MSG91 prescription outcome unknown', { deliveryId: id, error: String(error.message) });
     return { status: 'unknown', error: 'WhatsApp did not confirm in time. Check Messages before sending again.' };
   }
+});
+
+// Offline devices cannot safely pick the next bill number, so it is assigned here once the bill syncs.
+// Triggers can fire more than once; the transaction skips a bill that already has its number.
+exports.assignBillNumber = onDocumentCreated({ document: 'bills/{billId}', region }, async (event) => {
+  const bill = event.data?.data();
+  if (!bill || bill.number) return;
+  const year = financialYear(bill.date);
+  const counterRef = db.doc(`billCounters/${bill.clinicId}_${year}`);
+  await db.runTransaction(async (tx) => {
+    const [fresh, counter] = await Promise.all([tx.get(event.data.ref), tx.get(counterRef)]);
+    if (!fresh.exists || fresh.data().number) return;
+    const next = (counter.data()?.last || 0) + 1;
+    tx.set(counterRef, { clinicId: bill.clinicId, year, last: next });
+    tx.update(event.data.ref, { number: billNumber(bill.date, next) });
+  });
 });
 
 // Serves a sent prescription PDF to MSG91/WhatsApp. The link carries a random token
