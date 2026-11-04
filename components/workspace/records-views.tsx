@@ -44,7 +44,7 @@ export function MessagesView({ w }: { w: Workspace }) {
   return <div className="page">
     <header className="page-head"><div><p className="eyebrow">Automatic WhatsApp</p><h1>Messages</h1></div>
       <Chips label="Filter" size="sm" value={filter} onChange={setFilter} options={[{ value: 'issues', label: `Issues (${issues.length})` }, { value: 'all', label: `All (${w.deliveries.length})` }]} /></header>
-    <p className="lede">Prescriptions sent from the builder appear here too. Patients with consent get a confirmation when booked, a reminder 2 days before and at 8 AM on the day. Marking a visit Missed sends a follow-up right away and again 7 days after the visit. “Sent” means the provider accepted it.</p>
+    <p className="lede">{w.clinic.prescriptionsEnabled && 'Prescriptions sent from the builder appear here too. '}Patients with consent get a confirmation when booked, a reminder 2 days before and at 8 AM on the day. Marking a visit Missed sends a follow-up right away and again 7 days after the visit. “Sent” means the provider accepted it.</p>
     <section className="card card-flush">
       {list.length ? <div className="table" role="table">
         <div className="tr th" role="row"><span>Visit</span><span>Patient</span><span>Message</span><span>Language</span><span>Status</span></div>

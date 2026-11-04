@@ -1,4 +1,4 @@
-import { collection, doc, onSnapshot, query, setDoc, where } from "firebase/firestore";
+import { collection, doc, onSnapshot, query, setDoc, updateDoc, where } from "firebase/firestore";
 import { firestore } from "./firebase";
 import { type Account } from "./auth-service";
 import { type Database, type Clinic, type Patient, type Appointment, type Reminder } from "./clinic";
@@ -11,6 +11,8 @@ export type Repository = {
   subscribeDoctorDigests(account: Account, onUpdate: (records: DoctorDigestDelivery[]) => void, onError: (error: Error) => void): Unsubscribe;
   subscribePrescriptions(account: Account, onUpdate: (records: Prescription[]) => void, onError: (error: Error) => void): Unsubscribe;
   saveClinic(clinic: Clinic): Promise<void>;
+  /** Administrator only; firestore.rules rejects it from clinic accounts. */
+  setPrescriptionsEnabled(clinicId: string, enabled: boolean): Promise<void>;
   savePatient(patient: Patient): Promise<void>;
   saveAppointment(appointment: Appointment): Promise<void>;
   savePrescription(prescription: Prescription): Promise<void>;
@@ -33,6 +35,7 @@ export const firestoreRepository: Repository = {
   subscribeDeliveries: (account, onUpdate, onError) => subscribeCollection(account, "messageDeliveries", onUpdate, onError),
   subscribePrescriptions: (account, onUpdate, onError) => subscribeCollection(account, "prescriptions", onUpdate, onError),
   saveClinic: (clinic: Clinic) => setDoc(doc(firestore, "clinics", clinic.id), clinic),
+  setPrescriptionsEnabled: (clinicId, enabled) => updateDoc(doc(firestore, "clinics", clinicId), { prescriptionsEnabled: enabled }),
   savePatient: (patient: Patient) => setDoc(doc(firestore, "patients", patient.id), patient),
   saveAppointment: (appointment: Appointment) => setDoc(doc(firestore, "appointments", appointment.id), appointment),
   savePrescription: (prescription: Prescription) => setDoc(doc(firestore, "prescriptions", prescription.id), prescription),

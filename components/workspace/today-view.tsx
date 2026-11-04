@@ -40,7 +40,7 @@ export default function TodayView({ w }: { w: Workspace }) {
       <div className="q-actions">
         {a.status === 'scheduled' && <button className="btn btn-sm btn-soft" onClick={() => w.setStatus(a, 'completed')} title="Mark as seen"><Check size={15} /><span>Seen</span></button>}
         {a.status === 'scheduled' && ended && <button className="btn btn-sm btn-ghost" onClick={() => w.confirmMissed(a)} title="Mark as missed"><UserX size={15} /><span>Missed</span></button>}
-        {a.status !== 'cancelled' && a.status !== 'missed' && (rx
+        {w.clinic.prescriptionsEnabled && a.status !== 'cancelled' && a.status !== 'missed' && (rx
           ? <button className="btn btn-sm btn-ghost" onClick={() => w.writeRx({ item: rx })} title="View prescription"><FileText size={15} /><span>Rx{rx.sentAt ? ' ✓' : ''}</span></button>
           : <button className="btn btn-sm btn-ghost" onClick={() => w.writeRx({ patientId: a.patientId, doctorId: a.doctorId, appointmentId: a.id })} title="Write prescription"><FileText size={15} /><span>Rx</span></button>)}
       </div>
@@ -82,7 +82,7 @@ export default function TodayView({ w }: { w: Workspace }) {
           {(() => { const p = w.patient(next.patientId); return <>
             <div className="next-who"><Avatar name={p?.name || '?'} size="lg" /><div><strong>{p?.name}</strong><small>{next.reason}</small><small>{w.doctorName(next.doctorId)}</small></div></div>
             <div className="next-actions">
-              <button className="btn btn-primary" onClick={() => w.writeRx({ patientId: next.patientId, doctorId: next.doctorId, appointmentId: next.id })}><FileText size={16} />Write Rx</button>
+              {w.clinic.prescriptionsEnabled && <button className="btn btn-primary" onClick={() => w.writeRx({ patientId: next.patientId, doctorId: next.doctorId, appointmentId: next.id })}><FileText size={16} />Write Rx</button>}
               <button className="btn btn-soft" onClick={() => w.setStatus(next, 'completed')}><Check size={16} />Seen</button>
               {p && <a className="btn btn-ghost" href={`tel:${p.phone}`}><Phone size={16} />Call</a>}
             </div>

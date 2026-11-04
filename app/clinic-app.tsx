@@ -59,7 +59,6 @@ export default function ClinicApp() {
   const [loadError, setLoadError] = useState('');
   const [selectedClinicId, setSelectedClinicId] = useState(() => { try { return localStorage.getItem('activeClinic') || ''; } catch { return ''; } });
   const [hashPage, hashId] = useHash().slice(1).split('/');
-  const page = (pages.some(p => p.id === hashPage) ? hashPage : 'today') as Page;
   const patientId = hashId || null;
   const [scheduleDate, setScheduleDate] = useState('');
   const [doctorFilter, setDoctorFilter] = useState('all');
@@ -98,6 +97,9 @@ export default function ClinicApp() {
 
   const clinic = db ? db.clinics.find(c => c.id === (account?.role === 'admin' ? selectedClinicId : account?.clinicId)) || db.clinics[0] : undefined;
   const now = clinic ? zonedNow(clinic.timezone) : { date: '', time: '' };
+  const rxEnabled = clinic?.prescriptionsEnabled === true;
+  const navPages = rxEnabled ? pages : pages.filter(p => p.id !== 'rx');
+  const page = (navPages.some(p => p.id === hashPage) ? hashPage : 'today') as Page;
 
   const scoped = useMemo(() => {
     if (!db || !clinic) return null;
@@ -109,7 +111,7 @@ export default function ClinicApp() {
       appointments: db.appointments.filter(a => a.clinicId === clinic.id),
       deliveries: deliveries.filter(d => d.clinicId === clinic.id),
       digests: digests.filter(d => d.clinicId === clinic.id),
-      prescriptions: prescriptions.filter(r => r.clinicId === clinic.id).map(withDefaults),
+      prescriptions: clinic.prescriptionsEnabled ? prescriptions.filter(r => r.clinicId === clinic.id).map(withDefaults) : [],
     };
   }, [db, clinic, deliveries, digests, prescriptions]);
 
@@ -125,7 +127,7 @@ export default function ClinicApp() {
       if (k === '/') { e.preventDefault(); setPalette(true); }
       else if (k === 'n') { e.preventDefault(); setBooking({}); }
       else if (k === 'p') { e.preventDefault(); setPatientModal({}); }
-      else if (k === 'r') { e.preventDefault(); if (clinic) setRxDraft(blankPrescription(clinic, now.date)); }
+      else if (k === 'r' && clinic?.prescriptionsEnabled) { e.preventDefault(); setRxDraft(blankPrescription(clinic, now.date)); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -189,8 +191,8 @@ export default function ClinicApp() {
     <aside className="side">
       <div className="side-top"><Logo /></div>
       <div className="side-clinic">{clinicPicker}<small>{clinic.address}</small></div>
-      <nav className="side-nav" aria-label="Main">{pages.map(p => <a key={p.id} href={'#' + p.id} className={page === p.id ? 'on' : ''} aria-current={page === p.id ? 'page' : undefined}>{p.icon}<span>{p.label}</span>{!!badge[p.id] && <em className="badge">{badge[p.id]}</em>}</a>)}</nav>
-      <div className="side-help"><p><Kbd>N</Kbd> appointment</p><p><Kbd>R</Kbd> prescription</p><p><Kbd>P</Kbd> patient</p><p><Kbd>/</Kbd> search</p></div>
+      <nav className="side-nav" aria-label="Main">{navPages.map(p => <a key={p.id} href={'#' + p.id} className={page === p.id ? 'on' : ''} aria-current={page === p.id ? 'page' : undefined}>{p.icon}<span>{p.label}</span>{!!badge[p.id] && <em className="badge">{badge[p.id]}</em>}</a>)}</nav>
+      <div className="side-help"><p><Kbd>N</Kbd> appointment</p>{rxEnabled && <p><Kbd>R</Kbd> prescription</p>}<p><Kbd>P</Kbd> patient</p><p><Kbd>/</Kbd> search</p></div>
       <div className="side-user"><span className="avatar t1 avatar-sm">{initials(account.user.email || 'U')}</span><span className="side-email">{account.user.email}</span><button className="btn-icon" title="Sign out" aria-label="Sign out" onClick={() => demo ? location.assign(location.origin + location.pathname) : authService.signOut()}><LogOut size={16} /></button></div>
     </aside>
 
@@ -200,7 +202,7 @@ export default function ClinicApp() {
         <button className="top-search" onClick={() => setPalette(true)}><Search size={16} /><span>Search patients, actions…</span><Kbd>Ctrl K</Kbd></button>
         <div className="top-right">
           <span className="top-clock" title={clinic.timezone}>{clockLabel(now.time)}</span>
-          <button className="btn btn-outline btn-top" onClick={() => w.writeRx()}><FileText size={16} /><span>Prescription</span></button>
+          {rxEnabled && <button className="btn btn-outline btn-top" onClick={() => w.writeRx()}><FileText size={16} /><span>Prescription</span></button>}
           <button className="btn btn-primary btn-top" onClick={() => w.book()}><CalendarPlus size={16} /><span>Appointment</span></button>
           <a className="btn-icon top-settings" href="#settings" aria-label="Settings"><Settings size={18} /></a>
         </div>
@@ -220,7 +222,7 @@ export default function ClinicApp() {
       </main>
     </div>
 
-    <nav className="tabbar" aria-label="Main">{pages.slice(0, 5).map(p => <a key={p.id} href={'#' + p.id} className={page === p.id ? 'on' : ''}>{p.icon}<span>{p.id === 'rx' ? 'Rx' : p.label}</span>{!!badge[p.id] && <em className="badge">{badge[p.id]}</em>}</a>)}</nav>
+    <nav className="tabbar" aria-label="Main">{navPages.slice(0, 5).map(p => <a key={p.id} href={'#' + p.id} className={page === p.id ? 'on' : ''}>{p.icon}<span>{p.id === 'rx' ? 'Rx' : p.label}</span>{!!badge[p.id] && <em className="badge">{badge[p.id]}</em>}</a>)}</nav>
 
     <Modal open={!!booking} onClose={() => setBooking(null)} title={booking?.item?.status === 'scheduled' && scoped.appointments.some(a => a.id === booking.item!.id) ? 'Reschedule appointment' : 'New appointment'} subtitle={clinic.name}>
       {booking && <AppointmentForm db={db} clinic={clinic} date={booking.date || booking.item?.date || now.date} appointment={booking.item} patientId={booking.patientId} doctorId={booking.doctorId || (doctorFilter !== 'all' ? doctorFilter : undefined)} time={booking.time} onSave={saveAppointment} onCreatePatient={savePatient} />}
@@ -238,7 +240,7 @@ export default function ClinicApp() {
       {confirmBox && <div className="confirm"><p>{confirmBox.body}</p><div className="form-foot"><button className="btn btn-ghost" onClick={() => setConfirmBox(null)}>Keep as is</button><button data-autofocus className={'btn ' + (confirmBox.danger ? 'btn-danger' : 'btn-primary')} onClick={() => { confirmBox.action(); setConfirmBox(null); }}>{confirmBox.cta || 'Confirm'}</button></div></div>}
     </Modal>
     <RxDialog open={!!rxDraft}>{rxDraft && <Suspense fallback={<div className="rxb-loading">Opening prescription…</div>}><PrescriptionBuilder key={rxDraft.id} w={w} initial={rxDraft} onClose={() => setRxDraft(null)} /></Suspense>}</RxDialog>
-    {palette && <Suspense fallback={null}><CommandPalette w={w} open={palette} onClose={() => setPalette(false)} pages={pages} /></Suspense>}
+    {palette && <Suspense fallback={null}><CommandPalette w={w} open={palette} onClose={() => setPalette(false)} pages={navPages} /></Suspense>}
   </div></>;
 }
 

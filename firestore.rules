@@ -2,7 +2,7 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     // users/{uid}: uid, email, clinicId, createdAt (strings); admin writes only.
-    // clinics/{id}: core details, doctors (optional email, qualification, registration no., pad specialty), optional doctor digest and prescription pad settings.
+    // clinics/{id}: core details, doctors (optional email, qualification, registration no., pad specialty), optional doctor digest and prescription pad settings, prescriptionsEnabled (bool, admin writes only; missing means off).
     // patients/{id}: id, clinicId, name, phone (strings), consent (bool), optional language (en/mr/hi).
     // appointments/{id}: id, clinicId, patientId, doctorId, date, time, reason, status (strings), duration (int).
     // prescriptions/{id}: id, clinicId, patientId, doctorId, date, medicines (list), createdAt; optional vitals, notes, follow-up, sentAt.
@@ -18,8 +18,9 @@ service cloud.firestore {
     function optionalText(data, field, max) { return !(field in data) || text(data[field], max); }
     function validClinic(data, id) {
       return data.keys().hasAll(['id','name','address','phone','timezone','opens','closes','doctors'])
-        && data.keys().hasOnly(['id','name','address','phone','timezone','opens','closes','doctors','doctorDigestEnabled','doctorDigestTime','rxPad'])
+        && data.keys().hasOnly(['id','name','address','phone','timezone','opens','closes','doctors','doctorDigestEnabled','doctorDigestTime','rxPad','prescriptionsEnabled'])
         && (!('rxPad' in data) || (data.rxPad is map && data.rxPad.size() <= 10))
+        && (!('prescriptionsEnabled' in data) || data.prescriptionsEnabled is bool)
         && data.id == id && text(data.name, 100) && text(data.address, 250)
         && text(data.phone, 20) && text(data.timezone, 80)
         && text(data.opens, 5) && text(data.closes, 5)
@@ -69,6 +70,12 @@ service cloud.firestore {
         && (!('advice' in data) || (data.advice is string && data.advice.size() <= 3000))
         && (!('tests' in data) || (data.tests is string && data.tests.size() <= 1000));
     }
+    function prescriptionsOn(clinicId) {
+      return get(/databases/$(database)/documents/clinics/$(clinicId)).data.get('prescriptionsEnabled', false) == true;
+    }
+    function keepsPrescriptionSwitch() {
+      return request.resource.data.get('prescriptionsEnabled', false) == resource.data.get('prescriptionsEnabled', false);
+    }
     function sameClinic() { return request.resource.data.clinicId == resource.data.clinicId; }
 
     match /users/{uid} {
@@ -82,7 +89,7 @@ service cloud.firestore {
       allow get: if isAdmin() || clinicMember(id);
       allow list: if isAdmin();
       allow create: if isAdmin() && validClinic(request.resource.data, id);
-      allow update: if canAccess(id) && validClinic(request.resource.data, id);
+      allow update: if canAccess(id) && validClinic(request.resource.data, id) && (isAdmin() || keepsPrescriptionSwitch());
       allow delete: if false;
     }
     match /patients/{id} {
@@ -105,8 +112,8 @@ service cloud.firestore {
     }
     match /prescriptions/{id} {
       allow get, list: if canAccess(resource.data.clinicId);
-      allow create: if canAccess(request.resource.data.clinicId) && validPrescription(request.resource.data, id);
-      allow update: if canAccess(resource.data.clinicId) && sameClinic() && validPrescription(request.resource.data, id);
+      allow create: if canAccess(request.resource.data.clinicId) && prescriptionsOn(request.resource.data.clinicId) && validPrescription(request.resource.data, id);
+      allow update: if canAccess(resource.data.clinicId) && prescriptionsOn(resource.data.clinicId) && sameClinic() && validPrescription(request.resource.data, id);
       allow delete: if false;
     }
     match /messageDeliveries/{id} {

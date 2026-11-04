@@ -332,6 +332,7 @@ exports.sendPrescription = onCall({
     throw new HttpsError('failed-precondition', 'The patient or clinic for this prescription no longer exists.');
   }
   const clinic = clinicSnap.data(), patient = patientSnap.data();
+  if (clinic.prescriptionsEnabled !== true) throw new HttpsError('permission-denied', 'Digital prescriptions are not enabled for this clinic.');
   if (!patient.consent) throw new HttpsError('failed-precondition', `${patient.name} has not agreed to WhatsApp messages.`);
   if (!/^\+[1-9]\d{7,14}$/.test(patient.phone)) throw new HttpsError('failed-precondition', 'The patient phone number is not valid.');
   const settings = config();

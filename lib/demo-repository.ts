@@ -20,7 +20,7 @@ function demoData() {
   const date = db.appointments[0].date;
   db.patients.forEach((p, i) => { p.language = (['en', 'hi', 'mr'] as const)[i % 3]; });
   const dental = db.clinics[0];
-  Object.assign(dental, { name: 'Greenleaf Dental Care', rxPad: { specialty: 'dental', style: 'classic', accent: '#1f5fbf', tagline: 'Complete family dental care', footer: 'Mon–Sat 9 AM – 7 PM · For emergencies call the clinic number', paper: 'A5' } });
+  Object.assign(dental, { name: 'Greenleaf Dental Care', prescriptionsEnabled: true, rxPad: { specialty: 'dental', style: 'classic', accent: '#1f5fbf', tagline: 'Complete family dental care', footer: 'Mon–Sat 9 AM – 7 PM · For emergencies call the clinic number', paper: 'A5' } });
   dental.doctors = [
     { id: 'priya', name: 'Dr. Priya Nair', specialty: 'Endodontist', qualification: 'BDS, MDS (Conservative Dentistry & Endodontics)', regNo: 'A-12345', padSpecialty: 'dental' },
     { id: 'arjun', name: 'Dr. Arjun Mehta', specialty: 'Pedodontist', qualification: 'BDS, MDS (Pediatric Dentistry)', regNo: 'A-23456', padSpecialty: 'dental' },
@@ -61,6 +61,7 @@ export function createDemoRepository(): Repository {
     subscribeDoctorDigests: (_a, onUpdate) => watch(() => onUpdate(state.digests)),
     subscribePrescriptions: (_a, onUpdate) => watch(() => onUpdate(state.prescriptions)),
     saveClinic: async c => { state.db.clinics = state.db.clinics.map(x => x.id === c.id ? c : x); return later(); },
+    setPrescriptionsEnabled: async (id, prescriptionsEnabled) => { state.db.clinics = state.db.clinics.map(x => x.id === id ? { ...x, prescriptionsEnabled } : x); return later(); },
     savePatient: async p => { state.db.patients = upsert(state.db.patients, p); return later(); },
     saveAppointment: async a => { state.db.appointments = upsert(state.db.appointments, a); return later(); },
     savePrescription: async rx => { state.prescriptions = upsert(state.prescriptions, rx); return later(); },

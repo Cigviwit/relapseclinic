@@ -22,10 +22,14 @@ export default function SettingsView({ w, onCreateClinic, demo }: { w: Workspace
       return toast.error('Some upcoming appointments fall outside these hours. Reschedule them before changing clinic hours.');
     // Keep pad details from the latest clinic record; this form only edits clinic and doctor basics.
     const doctors = form.doctors.map(d => { const live = clinic.doctors.find(x => x.id === d.id); return live ? { ...live, name: d.name, specialty: d.specialty, email: d.email } : d; });
-    w.repo.saveClinic({ ...form, doctors, ...(clinic.rxPad ? { rxPad: clinic.rxPad } : {}) }).then(() => toast.success('Clinic settings saved')).catch(e => toast.error(e.message));
+    // The form may hold an older copy; the prescription switch is only changed by the administrator below.
+    w.repo.saveClinic({ ...form, doctors, ...(clinic.rxPad ? { rxPad: clinic.rxPad } : {}), ...(clinic.prescriptionsEnabled !== undefined ? { prescriptionsEnabled: clinic.prescriptionsEnabled } : {}) }).then(() => toast.success('Clinic settings saved')).catch(e => toast.error(e.message));
   }
   function savePad(rxPad: RxPad, doctors: Doctor[]) {
     w.repo.saveClinic({ ...clinic, rxPad, doctors }).then(() => toast.success('Prescription pad saved')).catch(e => toast.error(e.message));
+  }
+  function togglePrescriptions(target: Clinic, enabled: boolean) {
+    w.repo.setPrescriptionsEnabled(target.id, enabled).then(() => toast.success(`Digital prescriptions ${enabled ? 'enabled' : 'disabled'} for ${target.name}`)).catch(e => toast.error(e.message));
   }
   async function sendDigest() {
     if (sending) return;
@@ -45,7 +49,7 @@ export default function SettingsView({ w, onCreateClinic, demo }: { w: Workspace
 
   return <div className="page">
     <header className="page-head"><div><p className="eyebrow">{clinic.name}</p><h1>Settings</h1></div></header>
-    <section className="card" id="pad"><h2 className="card-title"><FileText size={16} />Prescription pad</h2><PadSettings key={clinic.id} clinic={clinic} onSave={savePad} /></section>
+    {clinic.prescriptionsEnabled && <section className="card" id="pad"><h2 className="card-title"><FileText size={16} />Prescription pad</h2><PadSettings key={clinic.id} clinic={clinic} onSave={savePad} /></section>}
     <div className="split">
       <section className="card"><ClinicForm key={clinic.id} clinic={clinic} onSave={save} /></section>
       <aside className="rail">
@@ -63,6 +67,11 @@ export default function SettingsView({ w, onCreateClinic, demo }: { w: Workspace
           <button className="btn btn-ghost btn-block" onClick={() => authService.signOut()}><LogOut size={15} />Sign out</button>
         </section>
         {w.account.role === 'admin' && <section className="card"><h2 className="card-title"><Building2 size={16} />Clinic accounts</h2><p className="muted">Create a separate login for each clinic. Switch clinics from the sidebar.</p><button className="btn btn-soft btn-block" onClick={onCreateClinic}>Create clinic account</button></section>}
+        {w.account.role === 'admin' && <section className="card">
+          <h2 className="card-title"><FileText size={16} />Digital prescriptions</h2>
+          <p className="muted">Off for every clinic until you turn it on here. Clinics cannot change this themselves.</p>
+          {w.db.clinics.map(c => <label className="check check-box" key={c.id}><input type="checkbox" checked={c.prescriptionsEnabled === true} onChange={e => togglePrescriptions(c, e.target.checked)} /><span><strong>{c.name}</strong><small>{c.address}</small></span></label>)}
+        </section>}
       </aside>
     </div>
   </div>;

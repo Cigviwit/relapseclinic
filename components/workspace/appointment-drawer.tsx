@@ -27,7 +27,7 @@ export default function AppointmentDrawer({ w, appointment, onClose }: { w: Work
         <button className="btn btn-primary" onClick={() => w.book({ item: { ...a, id: crypto.randomUUID(), status: 'scheduled', date: w.now.date, time: '' } })}><CalendarClock size={16} />Rebook visit</button>
         <button className="btn btn-outline" onClick={() => { void w.setStatus(a, 'completed'); }}>Correct to seen</button>
       </>}
-      {a.status !== 'cancelled' && a.status !== 'missed' && <button className="btn btn-soft" onClick={() => w.writeRx(rx ? { item: rx } : { patientId: a.patientId, doctorId: a.doctorId, appointmentId: a.id })}><FileText size={16} />{rx ? 'View prescription' : 'Write prescription'}</button>}
+      {w.clinic.prescriptionsEnabled && a.status !== 'cancelled' && a.status !== 'missed' && <button className="btn btn-soft" onClick={() => w.writeRx(rx ? { item: rx } : { patientId: a.patientId, doctorId: a.doctorId, appointmentId: a.id })}><FileText size={16} />{rx ? 'View prescription' : 'Write prescription'}</button>}
       {p && <a className="btn btn-ghost" href={`https://wa.me/${p.phone.replace(/\D/g, '')}`} target="_blank" rel="noreferrer"><MessageCircle size={16} />WhatsApp</a>}
       {p && <a className="btn btn-ghost" href={`tel:${p.phone}`}><Phone size={16} />Call</a>}
       <button className="btn btn-ghost" onClick={() => { onClose(); w.go('patients', a.patientId); }}><UserRound size={16} />Patient history</button>

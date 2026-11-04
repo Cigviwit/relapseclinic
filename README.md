@@ -33,6 +33,8 @@ Try the UI without signing in at `http://localhost:5173/?demo` (localhost only; 
 
 ## Prescriptions
 
+Digital prescriptions are off for every clinic by default. Only the administrator can turn them on, per clinic, in **Settings → Digital prescriptions** (`prescriptionsEnabled` on the clinic; `firestore.rules` and `sendPrescription` enforce it). While off, the clinic sees no prescription screens or shortcuts; records already written are kept and reappear if it is turned back on.
+
 Write a prescription from Today’s queue, an appointment, a patient’s page or with `R`. **Settings → Prescription pad** chooses the clinic’s specialty (Dental, General physician, Pediatrics, Dermatology), layout (Classic, Colour band, Minimal), colour, A5/A4 paper, tagline and footer, plus each doctor’s qualification, registration number and own pad specialty. The specialty decides which sections the builder shows and its quick-pick lists (`lib/rx-templates.ts`).
 
 The **Dental** pad adds medical history and allergies, an FDI tooth chart (adult and milk teeth), clinical findings, diagnosis, treatment done today and treatment advised, with dental medicines and post-procedure advice. The selected teeth are drawn on the printed pad.
