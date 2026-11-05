@@ -174,4 +174,14 @@ function recordChanges(before = {}, after) {
     .map((field) => ({ field, from: before[field] ?? null, to: after[field] ?? null }));
 }
 
-module.exports = { recordChanges, addDays, localNow, slotFor, missedDueNow, deliveryId, bodyValues, appointmentMessage, msg91Payload, prescriptionValues, prescriptionFileName, prescriptionDeliveryId, hasReplacementAppointment, digestDue, doctorDigest, doctorDigestId, manualDoctorDigestId };
+/** A merge changes only who the visit belongs to, so it is not a new booking and must not message anyone. */
+function movedByMerge(before, after) {
+  return !!after?.mergedFrom && before?.status === 'scheduled' && before.patientId === after.mergedFrom
+    && before.clinicId === after.clinicId && before.doctorId === after.doctorId && before.date === after.date && before.time === after.time;
+}
+
+/** The delivery id includes the patient, so after a merge an earlier message has to be recognised by what it was for. */
+const alreadySentBeforeMerge = (deliveries, appointment, slot) => !!appointment.mergedFrom
+  && deliveries.some((d) => d.slot === slot && d.appointmentDate === appointment.date && d.appointmentTime === appointment.time);
+
+module.exports = { movedByMerge, alreadySentBeforeMerge, recordChanges, addDays, localNow, slotFor, missedDueNow, deliveryId, bodyValues, appointmentMessage, msg91Payload, prescriptionValues, prescriptionFileName, prescriptionDeliveryId, hasReplacementAppointment, digestDue, doctorDigest, doctorDigestId, manualDoctorDigestId };

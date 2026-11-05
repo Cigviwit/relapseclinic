@@ -83,3 +83,25 @@ test('doctor with no appointments still receives a zero-count digest', () => {
   assert.equal(result.count, 0);
   assert.match(result.text, /No appointments scheduled/);
 });
+
+test('merging patients is not a new booking', () => {
+  const { movedByMerge } = require('../reminder-logic');
+  const before = { clinicId: 'c', patientId: 'old', doctorId: 'd', date: '2026-11-10', time: '10:00', status: 'scheduled' };
+  assert.equal(movedByMerge(before, { ...before, patientId: 'new', mergedFrom: 'old' }), true);
+  assert.equal(movedByMerge(before, { ...before, patientId: 'new' }), false, 'changing the patient without a merge is a real change');
+  assert.equal(movedByMerge({ ...before, patientId: 'new', mergedFrom: 'old' }, { ...before, patientId: 'new', mergedFrom: 'old', time: '11:00' }), false, 'a later reschedule still confirms');
+  assert.equal(movedByMerge(undefined, { ...before, mergedFrom: 'old' }), false);
+});
+
+test('a message sent before a merge is not sent again, but a new slot or time still is', () => {
+  const { alreadySentBeforeMerge, deliveryId } = require('../reminder-logic');
+  const visit = { id: 'a', clinicId: 'c', patientId: 'new', mergedFrom: 'old', doctorId: 'd', date: '2026-11-10', time: '10:00' };
+  assert.notEqual(deliveryId(visit, 'booked'), deliveryId({ ...visit, patientId: 'old' }, 'booked'), 'why this check is needed');
+  const sent = [{ slot: 'booked', appointmentDate: '2026-11-10', appointmentTime: '10:00' }];
+  assert.equal(alreadySentBeforeMerge(sent, visit, 'booked'), true);
+  assert.equal(alreadySentBeforeMerge(sent, visit, 'appointment_day'), false);
+  assert.equal(alreadySentBeforeMerge(sent, { ...visit, time: '11:00' }, 'booked'), false);
+  const { mergedFrom, ...unmerged } = visit;
+  assert.equal(mergedFrom, 'old');
+  assert.equal(alreadySentBeforeMerge(sent, unmerged, 'booked'), false, 'other visits behave exactly as before');
+});

@@ -17,7 +17,7 @@ const { createStaff, updateStaff, staffSetupLink, createClinic } = require('./st
 const { pdfPath, isFresh, purgeExpiredFiles } = require('./file-retention');
 const { mergePatients } = require('./merge-logic');
 const { uploadPatientFile, getPatientFile, removePatientFile } = require('./file-logic');
-const { recordChanges, addDays, localNow, slotFor, missedDueNow, deliveryId, appointmentMessage, msg91Payload, prescriptionValues, prescriptionFileName, prescriptionDeliveryId, hasReplacementAppointment, digestDue, doctorDigest, doctorDigestId, manualDoctorDigestId } = require('./reminder-logic');
+const { movedByMerge, alreadySentBeforeMerge, recordChanges, addDays, localNow, slotFor, missedDueNow, deliveryId, appointmentMessage, msg91Payload, prescriptionValues, prescriptionFileName, prescriptionDeliveryId, hasReplacementAppointment, digestDue, doctorDigest, doctorDigestId, manualDoctorDigestId } = require('./reminder-logic');
 
 initializeApp();
 const db = getFirestore();
@@ -104,6 +104,11 @@ async function sendAppointment(appointmentId, slot, expectedFingerprint, immedia
     if (firstAt && Date.now() - firstAt < 24 * 60 * 60 * 1000) return;
   }
   if (!/^\+[1-9]\d{7,14}$/.test(patient.phone)) throw new Error('Invalid patient phone');
+
+  if (appointment.mergedFrom) {
+    const earlier = await db.collection('messageDeliveries').where('clinicId', '==', appointment.clinicId).where('appointmentId', '==', appointmentId).get();
+    if (alreadySentBeforeMerge(earlier.docs.map((d) => d.data()), appointment, slot)) return;
+  }
 
   const id = deliveryId({ ...appointment, id: appointmentId }, slot);
   const ref = db.doc(`messageDeliveries/${id}`);
@@ -262,6 +267,7 @@ exports.sendBookingConfirmation = onDocumentWritten({
   const before = event.data?.before?.data();
   if (!after || after.status !== 'scheduled') return;
   if (before?.status === 'scheduled' && appointmentFingerprint(before) === appointmentFingerprint(after)) return;
+  if (movedByMerge(before, after)) return;
   await sendAppointment(event.params.appointmentId, 'booked', appointmentFingerprint(after));
 });
 
