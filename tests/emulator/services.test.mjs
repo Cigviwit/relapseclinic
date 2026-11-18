@@ -270,6 +270,14 @@ test('a file uploads, opens with its contents intact, and records who added it',
   await bucket.file(record.path).delete();
 });
 
+test('a paper prescription uploads as a PDF of kind prescription', async () => {
+  const pdfBytes = Buffer.from('%PDF-1.4\n%rx');
+  const { id } = await upload(doctor, { name: 'Rx from Dr Rao.pdf', kind: 'prescription', data: pdfBytes.toString('base64') });
+  const record = (await db.doc(`patientFiles/${id}`).get()).data();
+  assert.deepEqual([record.kind, record.contentType], ['prescription', 'application/pdf']);
+  await bucket.file(record.path).delete();
+});
+
 test('uploads are refused by role, clinic, type and size', async () => {
   await refused(upload(undefined), 'unauthenticated');
   await refused(upload(billing), 'permission-denied');

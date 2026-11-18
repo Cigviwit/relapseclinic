@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useRef, type MouseEvent, type ReactNode } from 'react';
 import { X } from 'lucide-react';
 import { initials } from '@/lib/clinic';
 
@@ -23,7 +23,14 @@ export function Modal({ open, onClose, title, subtitle, children, variant = 'mod
 }
 
 export function Field({ label, hint, children, className = '' }: { label: ReactNode; hint?: ReactNode; children: ReactNode; className?: string }) {
-  return <label className={'field ' + className}><span className="field-label">{label}</span>{children}{hint && <span className="field-hint">{hint}</span>}</label>;
+  // A label forwards stray clicks to its first control. Where that is a button (a chip, "Change patient"), clicking a caption or a gap would press it.
+  const keepButtonsUnpressed = (e: MouseEvent<HTMLLabelElement>) => {
+    const target = e.target as Element;
+    if (!(e.currentTarget.control instanceof HTMLButtonElement) || target.closest('button, input, select, textarea, a, summary') || target.closest('label') !== e.currentTarget) return;
+    e.preventDefault();
+    e.currentTarget.querySelector<HTMLElement>('input, select, textarea')?.focus();
+  };
+  return <label className={'field ' + className} onClick={keepButtonsUnpressed}><span className="field-label">{label}</span>{children}{hint && <span className="field-hint">{hint}</span>}</label>;
 }
 
 export function Select({ value, onChange, options, label, className = '' }: { value: string; onChange: (v: string) => void; options: { value: string; label: string }[]; label?: string; className?: string }) {

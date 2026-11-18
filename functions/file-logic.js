@@ -1,4 +1,4 @@
-// Patient documents: X-rays, reports and signed consent forms. Browsers never touch the bucket:
+// Patient documents: X-rays, prescriptions on paper, reports and signed consent forms. Browsers never touch the bucket:
 // every upload and download passes through these functions, so the role checks live in one place.
 const { randomUUID } = require('node:crypto');
 const { FieldValue } = require('firebase-admin/firestore');
@@ -6,7 +6,7 @@ const { ServiceError, resolveActor } = require('./access');
 
 // Callable requests are capped at 10 MB, and base64 adds a third.
 const MAX_FILE_BYTES = 7 * 1024 * 1024;
-const KINDS = ['xray', 'report', 'consent', 'photo', 'other'];
+const KINDS = ['xray', 'prescription', 'report', 'consent', 'photo', 'other'];
 const ID = /^[A-Za-z0-9_-]{1,100}$/;
 
 /** What a file really is, from its first bytes. A file named .jpg that is something else is refused. */

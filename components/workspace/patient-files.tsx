@@ -7,9 +7,9 @@ import { downloadBytes, fileKinds, fromBase64, MAX_UPLOAD_BYTES, sizeLabel, toBa
 import { Field, FormError, Modal, Select } from '../kit';
 import type { Workspace } from './types';
 
-function Uploader({ w, patientId, onDone }: { w: Workspace; patientId: string; onDone: () => void }) {
+export function Uploader({ w, patientId, initialKind = 'xray', onDone }: { w: Workspace; patientId: string; initialKind?: string; onDone: () => void }) {
   const [file, setFile] = useState<File | null>(null);
-  const [kind, setKind] = useState('xray');
+  const [kind, setKind] = useState(initialKind);
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -23,9 +23,9 @@ function Uploader({ w, patientId, onDone }: { w: Workspace; patientId: string; o
     } catch (e) { setError((e as Error).message); setBusy(false); }
   }
   return <div className="form">
-    <Field label="File" hint="PDF, JPEG, PNG, WebP or DICOM, up to 7 MB."><input className="input" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,.dcm,application/pdf,image/jpeg,image/png,image/webp,application/dicom" onChange={e => setFile(e.target.files?.[0] || null)} /></Field>
+    <Field label="File" hint={kind === 'prescription' ? 'A photo or scan of a paper prescription: PDF, JPEG, PNG or WebP, up to 7 MB.' : 'PDF, JPEG, PNG, WebP or DICOM, up to 7 MB.'}><input className="input" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,.dcm,application/pdf,image/jpeg,image/png,image/webp,application/dicom" onChange={e => setFile(e.target.files?.[0] || null)} /></Field>
     <Field label="Kind"><Select label="Kind of file" value={kind} onChange={setKind} options={fileKinds.map(k => ({ ...k }))} /></Field>
-    <Field label="Note (optional)"><input className="input" maxLength={300} placeholder="e.g. IOPA 36, before RCT" value={note} onChange={e => setNote(e.target.value)} /></Field>
+    <Field label="Note (optional)"><input className="input" maxLength={300} placeholder={kind === 'prescription' ? 'e.g. From Dr Rao, cardiologist' : 'e.g. IOPA 36, before RCT'} value={note} onChange={e => setNote(e.target.value)} /></Field>
     <FormError error={error} />
     <div className="form-foot"><button type="button" className="btn btn-primary" disabled={busy || !file} onClick={() => void upload()}>{busy ? 'Uploading…' : 'Upload'}</button></div>
   </div>;

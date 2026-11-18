@@ -87,7 +87,8 @@ export function WalkInForm({ clinic, patients, patientId, doctorId, onSave, onCr
   </form>;
 }
 
-export function ClinicForm({ clinic, onSave, busy }: { clinic?: Clinic; onSave: (c: Clinic) => void; busy?: boolean }) {
+/** `removalBlocked` returns why a saved doctor cannot be removed yet (for example, upcoming bookings), or nothing if they can. */
+export function ClinicForm({ clinic, onSave, busy, removalBlocked }: { clinic?: Clinic; onSave: (c: Clinic) => void; busy?: boolean; removalBlocked?: (doctorId: string) => string | undefined }) {
   const [c, setC] = useState<Clinic>(clinic || { id: crypto.randomUUID(), name: '', address: '', phone: '+91 ', timezone: 'Asia/Kolkata', opens: '09:00', closes: '19:00', doctors: [{ id: crypto.randomUUID(), name: '', specialty: 'Dentist' }], rxPad: { specialty: 'dental' } });
   const [error, setError] = useState('');
   const change = (v: Partial<Clinic>) => setC({ ...c, ...v });
@@ -103,8 +104,9 @@ export function ClinicForm({ clinic, onSave, busy }: { clinic?: Clinic; onSave: 
         <Field label={`Doctor ${i + 1}`}><input className="input" required value={d.name} placeholder="Dr. Priya Nair" onChange={e => change({ doctors: c.doctors.map(x => x.id === d.id ? { ...x, name: e.target.value } : x) })} /></Field>
         <Field label="Specialty"><input className="input" value={d.specialty} placeholder="Dentist" onChange={e => change({ doctors: c.doctors.map(x => x.id === d.id ? { ...x, specialty: e.target.value } : x) })} /></Field>
         <Field label="Email"><input className="input" type="email" value={d.email || ''} placeholder="doctor@clinic.com" onChange={e => change({ doctors: c.doctors.map(x => x.id === d.id ? { ...x, email: e.target.value } : x) })} /></Field>
-        {!clinic && c.doctors.length > 1 ? <button type="button" className="btn-icon" aria-label="Remove doctor" onClick={() => change({ doctors: c.doctors.filter(x => x.id !== d.id) })}><Trash2 size={16} /></button> : <span />}
+        {c.doctors.length > 1 ? <button type="button" className="btn-icon" aria-label={`Remove ${d.name || 'doctor'}`} title="Remove doctor" onClick={() => { const blocked = removalBlocked?.(d.id); if (blocked) { setError(blocked); return; } setError(''); change({ doctors: c.doctors.filter(x => x.id !== d.id) }); }}><Trash2 size={16} /></button> : <span />}
       </div>)}
+      {clinic && c.doctors.length < clinic.doctors.length && <p className="note note-warn">{clinic.doctors.length - c.doctors.length === 1 ? 'A doctor will be' : 'Doctors will be'} removed when you save. Past visits stay on record.</p>}
       <button type="button" className="btn btn-ghost" onClick={() => change({ doctors: [...c.doctors, { id: crypto.randomUUID(), name: '', specialty: '' }] })}><Plus size={16} />Add doctor</button>
     </fieldset>
     <fieldset className="fs"><legend>Evening email to doctors</legend>
@@ -112,6 +114,6 @@ export function ClinicForm({ clinic, onSave, busy }: { clinic?: Clinic; onSave: 
       <Field label="Send at (clinic time)" className="w-sm"><input className="input" type="time" value={c.doctorDigestTime || '18:00'} onChange={e => change({ doctorDigestTime: e.target.value })} /></Field>
     </fieldset>
     <FormError error={error} />
-    <div className="form-foot"><button className="btn btn-primary" type="submit" disabled={busy}>{clinic ? 'Save settings' : 'Create clinic'}</button></div>
+    <div className="form-foot"><button className="btn btn-primary" type="submit" disabled={busy}>{clinic ? 'Save settings' : busy ? 'Creating…' : 'Create clinic'}</button></div>
   </form>;
 }

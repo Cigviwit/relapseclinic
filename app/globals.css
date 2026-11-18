@@ -104,8 +104,9 @@ textarea.input { height: auto; padding: 9px 11px; resize: vertical; line-height:
 .activity li { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-top: 1px solid var(--line); flex-wrap: wrap; }
 .activity li:first-child { border-top: 0; }
 .activity small { color: var(--muted, #667); }
-.lock-screen { width: 100vw; height: 100vh; max-width: 100vw; max-height: 100vh; margin: 0; background: var(--bg, #f6f7f6); display: grid; place-items: center; }
-.lock-screen::backdrop { background: var(--bg, #f6f7f6); }
+/* [open] matters: display on a closed dialog would leave it invisibly covering the page and swallowing clicks. */
+.lock-screen[open] { width: 100vw; height: 100vh; max-width: 100vw; max-height: 100vh; margin: 0; background: var(--bg, #f6f7f6); display: grid; place-items: center; }
+.lock-screen[open]::backdrop { background: var(--bg, #f6f7f6); backdrop-filter: none; }
 .lock-card { width: min(380px, calc(100vw - 32px)); display: flex; flex-direction: column; gap: 14px; background: var(--surface, #fff); padding: 28px; border-radius: 16px; box-shadow: 0 8px 30px rgba(14, 26, 24, .1); }
 .crash { max-width: 480px; margin: 12vh auto; padding: 0 16px; display: flex; flex-direction: column; gap: 14px; align-items: flex-start; }
 .week-hours { display: flex; flex-direction: column; gap: 6px; }

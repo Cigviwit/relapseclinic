@@ -23,7 +23,14 @@ export default function SettingsView({ w, onCreateClinic, demo }: { w: Workspace
   const missingEmail = !clinic.doctors.length || clinic.doctors.some(d => !/^\S+@\S+\.\S+$/.test(d.email || ''));
   const digests = w.digests.slice().sort((a, b) => (b.createdAt?.toDate?.()?.getTime() || 0) - (a.createdAt?.toDate?.()?.getTime() || 0)).slice(0, 8);
 
+  // A doctor with bookings still ahead would leave those patients without a doctor, so they are moved or cancelled first.
+  function removalBlocked(doctorId: string) {
+    const ahead = w.appointments.filter(a => a.doctorId === doctorId && a.status === 'scheduled' && a.date >= today(clinic.timezone)).length;
+    if (ahead) return `${w.doctorName(doctorId)} has ${ahead} upcoming appointment${ahead === 1 ? '' : 's'}. Move them to another doctor or cancel them first.`;
+  }
   function save(form: Clinic) {
+    const removed = clinic.doctors.filter(d => !form.doctors.some(x => x.id === d.id)).map(d => removalBlocked(d.id)).find(Boolean);
+    if (removed) return toast.error(removed);
     if (w.appointments.some(a => a.status === 'scheduled' && a.date >= today(form.timezone) && (minutes(a.time) < minutes(form.opens) || minutes(a.time) + a.duration > minutes(form.closes))))
       return toast.error('Some upcoming appointments fall outside these hours. Reschedule them before changing clinic hours.');
     // Keep pad details from the latest clinic record; this form only edits clinic and doctor basics.
@@ -57,12 +64,12 @@ export default function SettingsView({ w, onCreateClinic, demo }: { w: Workspace
 
   return <div className="page">
     <header className="page-head"><div><p className="eyebrow">{clinic.name}</p><h1>Settings</h1></div></header>
-    {w.can.editClinic && clinic.prescriptionsEnabled && <section className="card" id="pad"><h2 className="card-title"><FileText size={16} />Prescription pad</h2><PadSettings key={clinic.id} clinic={clinic} onSave={savePad} /></section>}
+    {w.can.editClinic && clinic.prescriptionsEnabled && <section className="card" id="pad"><h2 className="card-title"><FileText size={16} />Prescription pad</h2><PadSettings key={clinic.id + clinic.doctors.map(d => d.id).join()} clinic={clinic} onSave={savePad} /></section>}
     {w.can.editClinic && w.billingOn && <section className="card" id="billing-settings"><h2 className="card-title"><IndianRupee size={16} />Billing</h2><BillingSettingsForm key={clinic.id} w={w} /></section>}
     <div className="split">
       <div className="rail">
-        {w.can.editClinic && <section className="card"><ClinicForm key={clinic.id} clinic={clinic} onSave={save} /></section>}
-        {w.can.editClinic && <section className="card" id="schedule"><ScheduleSettings key={clinic.id} w={w} /></section>}
+        {w.can.editClinic && <section className="card"><ClinicForm key={clinic.id} clinic={clinic} onSave={save} removalBlocked={removalBlocked} /></section>}
+        {w.can.editClinic && <section className="card" id="schedule"><ScheduleSettings key={clinic.id + clinic.doctors.map(d => d.id).join()} w={w} /></section>}
         {w.can.manageStaff && <section className="card" id="staff"><StaffSettings key={clinic.id} w={w} /></section>}
         {w.rxOn && w.can.writeRx && <section className="card" id="catalog"><CatalogSettings w={w} /></section>}
         {w.can.exportData && <section className="card" id="duplicates"><DuplicatesCard w={w} /></section>}

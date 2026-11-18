@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { permissionsFor, roleOptions } from '../lib/permissions.ts';
 import { HISTORY_DAYS, historyStart, mergeById } from '../lib/data-window.ts';
@@ -391,4 +392,14 @@ test('the browser’s day summary and the server’s closing totals agree', () =
   const server = dayTotals(date, bills, entries);
   assert.deepEqual(server.collected, browser.collected);
   assert.equal(server.billed, browser.billed);
+});
+
+// --- Dialogs ---
+test('a closed dialog stays hidden, so it cannot sit invisibly over the page and swallow clicks', () => {
+  const css = readFileSync(new URL('../app/globals.css', import.meta.url), 'utf8');
+  // Setting display on a dialog's own class overrides the browser's display:none for a closed dialog. Scope it with [open].
+  const unscoped = [...css.matchAll(/([^{}]*)\{([^{}]*)\}/g)]
+    .filter(([, selector, body]) => /(^|[\s,])\.(dlg|dlg-modal|dlg-drawer|dlg-full|dlg-wide|dlg-palette|lock-screen)\s*(,|$)/.test(selector.trim()) && /(^|[;\s])display\s*:/.test(body))
+    .map(([, selector]) => selector.trim());
+  assert.deepEqual(unscoped, []);
 });

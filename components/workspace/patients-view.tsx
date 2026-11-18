@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { ArrowLeft, CalendarPlus, ListPlus, Check, FileText, Lock, MessageCircle, NotebookPen, Pencil, Phone, Repeat2, Search, UserPlus, Users, X } from 'lucide-react';
+import { ArrowLeft, CalendarPlus, ListPlus, Check, FileText, Lock, MessageCircle, NotebookPen, Pencil, Phone, Repeat2, Search, Upload, UserPlus, Users, X } from 'lucide-react';
 import { clockLabel, dateLabel, reminderMessage, reminderStatus } from '@/lib/clinic';
 import { patientLanguageLabel } from '@/lib/patient-language';
 import { searchPatients } from '@/lib/patient-search';
@@ -11,7 +11,7 @@ import { Avatar, Empty, Modal, Status } from '../kit';
 import { AllergyBanner, MedicalSummary, NoteCard, NoteComposer, PatientRecordForm, RecordFacts } from './patient-record';
 import { PatientBilling } from '../billing/patient-billing';
 import { AddToWaitlist, FamilySection } from './front-desk-cards';
-import { PatientFiles } from './patient-files';
+import { PatientFiles, Uploader } from './patient-files';
 import { PatientLabCases, PatientRecalls, TreatmentPlans } from './dental-cards';
 import type { Workspace } from './types';
 
@@ -59,6 +59,7 @@ function PatientDetail({ w, id, onBack }: { w: Workspace; id: string; onBack: ()
   const notes = usePatientNotes(w.repo, w.clinic.id, w.can.readNotes ? id : '');
   const [editing, setEditing] = useState(false);
   const [waitlisting, setWaitlisting] = useState(false);
+  const [uploadingRx, setUploadingRx] = useState(false);
   const [composer, setComposer] = useState<{ correcting?: PatientNote } | null>(null);
   const allNotes = notes.status === 'ready' ? notes.value : [];
   const timeline = patientTimeline(past, rxs, allNotes);
@@ -79,6 +80,7 @@ function PatientDetail({ w, id, onBack }: { w: Workspace; id: string; onBack: ()
       {!w.waitlist.some(e => e.patientId === id) && <button className="btn btn-ghost" onClick={() => setWaitlisting(true)}><ListPlus size={16} />Waitlist</button>}
       {w.rxOn && w.can.writeRx && <button className="btn btn-soft" onClick={() => w.writeRx({ patientId: id })}><FileText size={16} />Write Rx</button>}
       {w.can.writeRx && rxs[0] && <button className="btn btn-ghost" onClick={() => w.writeRx({ patientId: id, repeat: rxs[0] })}><Repeat2 size={16} />Repeat last Rx</button>}
+      {w.can.writeRecords && <button className="btn btn-ghost" onClick={() => setUploadingRx(true)}><Upload size={16} />Upload Rx</button>}
       <a className="btn btn-ghost" href={`https://wa.me/${p.phone.replace(/\D/g, '')}`} target="_blank" rel="noreferrer"><MessageCircle size={16} />WhatsApp</a>
       <a className="btn btn-ghost" href={`tel:${p.phone}`}><Phone size={16} />Call</a>
       <button className="btn btn-ghost" onClick={() => w.editPatient(p)}><Pencil size={16} />Edit</button>
@@ -113,6 +115,9 @@ function PatientDetail({ w, id, onBack }: { w: Workspace; id: string; onBack: ()
     </div>
     <Modal open={waitlisting} onClose={() => setWaitlisting(false)} title="Add to waitlist" subtitle={p.name}>
       {waitlisting && <AddToWaitlist w={w} patientId={id} onDone={() => setWaitlisting(false)} />}
+    </Modal>
+    <Modal open={uploadingRx} onClose={() => setUploadingRx(false)} title="Upload a prescription" subtitle={p.name}>
+      {uploadingRx && <Uploader w={w} patientId={id} initialKind="prescription" onDone={() => setUploadingRx(false)} />}
     </Modal>
     <Modal open={editing} onClose={() => setEditing(false)} title="Medical record" subtitle={p.name} wide>
       {editing && record.status === 'ready' && <PatientRecordForm w={w} patientId={id} live={record.value} onDone={() => setEditing(false)} />}

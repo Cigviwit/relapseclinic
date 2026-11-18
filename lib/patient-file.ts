@@ -1,6 +1,6 @@
 export type PatientFile = { id: string; clinicId: string; patientId: string; name: string; kind: string; contentType: string; size: number; note?: string; createdBy: string; createdAt: string; removedAt?: string };
 export const MAX_UPLOAD_BYTES = 7 * 1024 * 1024;
-export const fileKinds = [{ value: 'xray', label: 'X-ray' }, { value: 'report', label: 'Report' }, { value: 'consent', label: 'Consent form' }, { value: 'photo', label: 'Clinical photo' }, { value: 'other', label: 'Other' }] as const;
+export const fileKinds = [{ value: 'xray', label: 'X-ray' }, { value: 'prescription', label: 'Prescription' }, { value: 'report', label: 'Report' }, { value: 'consent', label: 'Consent form' }, { value: 'photo', label: 'Clinical photo' }, { value: 'other', label: 'Other' }] as const;
 
 export const sizeLabel = (bytes: number) => bytes >= 1024 * 1024 ? `${(bytes / (1024 * 1024)).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
 

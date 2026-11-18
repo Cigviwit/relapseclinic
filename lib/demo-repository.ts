@@ -221,7 +221,7 @@ export function createDemoRepository(): Repository {
     subscribePatientFiles: (_c, patientId, onUpdate) => watch(() => onUpdate(state.files.filter(f => f.patientId === patientId).map(({ data: _data, ...f }) => f))), // eslint-disable-line @typescript-eslint/no-unused-vars
     uploadPatientFile: async ({ data, ...input }) => {
       const id = crypto.randomUUID();
-      state.files = [...state.files, { ...input, id, contentType: 'image/png', size: Math.round(data.length * 0.75), createdBy: demoAccount().name, createdAt: new Date().toISOString(), data }];
+      state.files = [...state.files, { ...input, id, contentType: data.startsWith('JVBER') ? 'application/pdf' : data.startsWith('/9j/') ? 'image/jpeg' : 'image/png', size: Math.round(data.length * 0.75), createdBy: demoAccount().name, createdAt: new Date().toISOString(), data }];
       log({ collection: 'patientFiles', docId: id, action: 'create', fields: [], patientId: input.patientId });
       return later();
     },
